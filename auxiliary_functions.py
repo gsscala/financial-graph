@@ -32,6 +32,9 @@ def generate_null_model(graph: nx.Graph) -> nx.Graph:
     Returns:
         A new graph with shuffled edge weights.
     """
+
+    random.seed(42)
+
     weights = [graph[a][b]["weight"] for a, b in graph.edges()]
     random.shuffle(weights)
     
@@ -267,8 +270,8 @@ def plot_weight_distribution(graph: nx.Graph) -> None:
         graph: Input NetworkX graph with weighted edges.
     """
     # Configuration for weight distribution histograms
-    WEIGHT_BIN_CENTERS = np.arange(-1, 1.1, 0.2)
-    WEIGHT_BIN_EDGES = np.append(WEIGHT_BIN_CENTERS - 0.1, WEIGHT_BIN_CENTERS[-1] + 0.1)
+    WEIGHT_BIN_CENTERS = np.arange(-1.0, 1.01, 0.1)
+    WEIGHT_BIN_EDGES = np.append(WEIGHT_BIN_CENTERS - 0.05, WEIGHT_BIN_CENTERS[-1] + 0.05)
 
     # Configuration for sign distribution histograms
     SIGN_BIN_EDGES = [-1.5, -0.5, 0.5, 1.5]
@@ -349,6 +352,8 @@ def simplify_graph(graph: nx.Graph, std_threshold: float) -> nx.Graph:
     
     # Create simplified undirected graph
     simplified_graph = nx.Graph()
+
+    excluded = 0
         
     for node in edge_weights.keys():
         for neighbor in edge_weights[node].keys():
@@ -362,16 +367,20 @@ def simplify_graph(graph: nx.Graph, std_threshold: float) -> nx.Graph:
                             else [])
             all_weights = np.array(forward_weights + backward_weights)
             
-            # Filter by variance threshold
-            if all_weights.std() >= std_threshold:
-                continue
-            
             # Add edge with mean weight (skip zero weights)
             mean_weight = np.mean(all_weights)
             if mean_weight == 0:
                 continue
             
+            # Filter by variance threshold
+            if all_weights.std() >= std_threshold:
+                excluded += 1
+                continue
+            
+            
             simplified_graph.add_edge(node, neighbor, weight=mean_weight)
+    
+    print(excluded)
     
     return simplified_graph
 
@@ -405,46 +414,86 @@ def calculate_triangles_graph(graph: nx.Graph) -> list:
 
 def plot_triangle_distribution(triangles_graph: list) -> None:
     """
-    Visualize distributions of triangle statistics.
-    
+    Visualize triangle mean and product-sign distributions.
+
     Creates two histograms:
     - Left: Mean of edge weights within each triangle
-    - Right: Standard deviation of edge weights within each triangle
-    
+    - Right: Sign of the product of the three edge weights
+      (negative / neutral / positive)
+
     Args:
         triangles_graph: List of triangle weight tuples.
     """
-    WEIGHT_BIN_CENTERS = np.arange(-1, 1.1, 0.2)
-    WEIGHT_BIN_EDGES = np.append(WEIGHT_BIN_CENTERS - 0.1, WEIGHT_BIN_CENTERS[-1] + 0.1)
+    # Configuration for mean distribution histograms (same as weights)
+    WEIGHT_BIN_CENTERS = np.arange(-1.0, 1.01, 0.1)
+    WEIGHT_BIN_EDGES = np.append(WEIGHT_BIN_CENTERS - 0.05, WEIGHT_BIN_CENTERS[-1] + 0.05)
+
+    # Configuration for sign distribution histograms
+    SIGN_BIN_EDGES = [-1.5, -0.5, 0.5, 1.5]
+    SIGN_LABELS = ["negative", "neutral", "positive"]
+    SIGN_TICK_POSITIONS = [-1, 0, 1]
 
     fig, axes = plt.subplots(1, 2, figsize=(16, 8))
 
-    means = []
-    stds = []
-    for triangle in triangles_graph:
-        means.append(np.mean(triangle))
-        stds.append(np.std(triangle))
-    
-    # Plot histogram of means
-    axes[0].hist(means, bins=WEIGHT_BIN_EDGES, edgecolor="black")
-    axes[0].set_xticks(WEIGHT_BIN_CENTERS)
-    axes[0].set_title("Triangle Means", fontsize=18)
-    axes[0].set_xlabel("Mean Weight", fontsize=16)
-    axes[0].set_ylabel("Count", fontsize=16)
-    axes[0].tick_params(axis='both', labelsize=16)
+    def add_percentage_labels(ax, counts, bins, fontsize=14):
+        """
+        Add percentage labels on top of histogram bars.
+        """
+        total = counts.sum()
+        for count, bin_left, bin_right in zip(counts, bins[:-1], bins[1:]):
+            percent = 100 * count / total if total > 0 else 0
+            x_position = (bin_left + bin_right) / 2
+            ax.text(x_position, count, f"{percent:.1f}%", ha='center', va='bottom', fontsize=fontsize)
 
-    # Plot histogram of standard deviations
-    std_bins = np.arange(-0.05, 1.11, 0.1)
-    std_centers = np.arange(0, 1.1, 0.1)
+    # Prepare data
+    if triangles_graph is None or len(triangles_graph) == 0:
+        means = np.array([])
+        products = np.array([])
+        signs = np.array([])
+    else:
+        # Ensure triangles are sequences of three numbers
+        tri_arr = [np.array(tri, dtype=float) for tri in triangles_graph if len(tri) == 3]
+        if len(tri_arr) == 0:
+            means = np.array([])
+            products = np.array([])
+            signs = np.array([])
+        else:
+            means = np.array([tri.mean() for tri in tri_arr])
+            products = np.array([tri.prod() for tri in tri_arr])
+            signs = np.sign(products)
 
-    axes[1].hist(stds, bins=std_bins, edgecolor="black")
-    axes[1].set_xticks(std_centers)
-    axes[1].set_title("Triangle Stds", fontsize=18)
-    axes[1].set_xlabel("Std of Weights", fontsize=16)
-    axes[1].tick_params(axis='both', labelsize=16)
-        
+    # Left panel: Mean of triangle weights
+    ax_mean = axes[0]
+    if means.size > 0:
+        counts, _, _ = ax_mean.hist(means, bins=WEIGHT_BIN_EDGES, edgecolor="black")
+        ax_mean.set_xticks(WEIGHT_BIN_CENTERS)
+        ax_mean.set_xticklabels([f"{x:.1f}" for x in WEIGHT_BIN_CENTERS], rotation=60)
+        add_percentage_labels(ax_mean, counts, WEIGHT_BIN_EDGES)
+    else:
+        ax_mean.text(0.5, 0.5, 'No triangles', ha='center', va='center', fontsize=14, transform=ax_mean.transAxes)
+
+    ax_mean.set_title("Triangle Mean Weights", fontsize=20)
+    ax_mean.set_xlabel("Mean weight", fontsize=18)
+    ax_mean.set_ylabel("Count", fontsize=18)
+    ax_mean.tick_params(axis='both', labelsize=16)
+
+    # Right panel: Sign of product of edges
+    ax_sign = axes[1]
+    if signs.size > 0:
+        sign_counts, _, _ = ax_sign.hist(signs, bins=SIGN_BIN_EDGES, edgecolor="black", rwidth=0.8)
+        ax_sign.set_xticks(SIGN_TICK_POSITIONS)
+        ax_sign.set_xticklabels(SIGN_LABELS, fontsize=16)
+        add_percentage_labels(ax_sign, sign_counts, SIGN_BIN_EDGES)
+    else:
+        ax_sign.text(0.5, 0.5, 'No triangles', ha='center', va='center', fontsize=14, transform=ax_sign.transAxes)
+
+    ax_sign.set_title("Sign of Triangle Product", fontsize=20)
+    ax_sign.set_xlabel("Sign", fontsize=18)
+    ax_sign.tick_params(axis='both', labelsize=16)
+
     plt.tight_layout()
     plt.show()
+
 
 
 def number_of_triangles_per_type(triangles_graph: list) -> pd.DataFrame:

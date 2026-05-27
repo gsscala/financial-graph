@@ -9,7 +9,7 @@ with open("graph.csv", "r") as f:
     for node1, node2, weight, time in reader:
         node1 = int(node1)
         node2 = int(node2)
-        weight = int(weight) / 10
+        weight = (int(weight))/10
         G.add_edge(node1, node2, weight=weight)
 
-nx.write_gexf(G, "graph.gexf")
+nx.write_gexf(G, "graph_jupyter.gexf")
