@@ -17,9 +17,11 @@ import scipy.sparse.linalg as spla
 import scipy.linalg as la
 import matplotlib.pyplot as plt
 from collections import defaultdict
+from scipy.stats import gaussian_kde, percentileofscore
+import json
 
 
-def generate_null_model(graph: nx.Graph) -> nx.Graph:
+def generate_null_model(graph: nx.Graph, seed: int) -> nx.Graph:
     """
     Generate a null model by randomly shuffling edge weights.
     
@@ -33,7 +35,7 @@ def generate_null_model(graph: nx.Graph) -> nx.Graph:
         A new graph with shuffled edge weights.
     """
 
-    random.seed(42)
+    random.seed(seed)
 
     weights = [graph[a][b]["weight"] for a, b in graph.edges()]
     random.shuffle(weights)
@@ -173,65 +175,32 @@ def in_balance(triangle: list) -> int:
     return 1 - (triangle.count(-1) % 2)
 
 
-def kolmogorov(vals_a: np.ndarray, cum_a: np.ndarray, 
-               vals_b: np.ndarray, cum_b: np.ndarray, 
-               normalize: bool = False) -> float:
-    """
-    Compute the Kolmogorov-Smirnov statistic between two cumulative distributions.
-    
-    Calculates the maximum absolute difference between two cumulative distribution
-    functions across the union of their support points.
-    
-    Args:
-        vals_a: Sorted x-values for distribution A.
-        cum_a: Cumulative counts for distribution A.
-        vals_b: Sorted x-values for distribution B.
-        cum_b: Cumulative counts for distribution B.
-        normalize: If True, normalize both distributions to [0,1].
-        
-    Returns:
-        Maximum absolute difference between the two distributions.
-    """
+def kolmogorov(vals_a, cum_a, vals_b, cum_b, normalize=False):
     vals_a = np.asarray(vals_a)
     cum_a = np.asarray(cum_a, dtype=float)
     vals_b = np.asarray(vals_b)
     cum_b = np.asarray(cum_b, dtype=float)
 
-    # Create combined x-grid from union of both distributions
     all_vals = np.array(sorted(set(vals_a.tolist()) | set(vals_b.tolist())))
     if all_vals.size == 0:
-        return 0
+        return 0.0
 
-    def forward_fill(vals, cum, x_grid):
-        """
-        Forward-fill cumulative values onto a new grid.
-        
-        For each x in x_grid, return the cumulative value at the largest
-        vals <= x (or 0 if no such value exists).
-        """
+    def ff(vals, cum):
         if vals.size == 0:
-            return np.zeros_like(x_grid, dtype=float)
-        idx = np.searchsorted(vals, x_grid, side='right') - 1
+            return np.zeros_like(all_vals, dtype=float)
+        idx = np.searchsorted(vals, all_vals, side='right') - 1
         return np.where(idx >= 0, cum[idx], 0.0)
 
-    # Interpolate both distributions onto common grid
-    y_a = forward_fill(vals_a, cum_a, all_vals)
-    y_b = forward_fill(vals_b, cum_b, all_vals)
+    y_a = ff(vals_a, cum_a)
+    y_b = ff(vals_b, cum_b)
 
-    # Normalize if requested
     if normalize:
-        denom_a = y_a[-1] if y_a.size > 0 else 0.0
-        denom_b = y_b[-1] if y_b.size > 0 else 0.0
-        if denom_a > 0:
-            y_a = y_a / denom_a
-        if denom_b > 0:
-            y_b = y_b / denom_b
+        if y_a[-1] > 0:
+            y_a = y_a / y_a[-1]
+        if y_b[-1] > 0:
+            y_b = y_b / y_b[-1]
 
-    # Calculate maximum difference
-    diffs = np.abs(y_a - y_b)
-    max_diff = diffs.max() if diffs.size > 0 else 0
-
-    return max_diff
+    return float(np.max(np.abs(y_a - y_b)))
 
 
 def find_alfa(vals_a: np.ndarray, cum_a: np.ndarray,
@@ -328,7 +297,7 @@ def plot_weight_distribution(graph: nx.Graph) -> None:
     plt.show()
 
 
-def simplify_graph(graph: nx.Graph, std_threshold: float) -> nx.Graph:
+def simplify_graph(graph: nx.Graph, std_threshold: float, continuous:bool) -> nx.Graph:
     """
     Simplify a multi-edge graph by consolidating parallel edges.
     
@@ -378,7 +347,7 @@ def simplify_graph(graph: nx.Graph, std_threshold: float) -> nx.Graph:
                 continue
             
             
-            simplified_graph.add_edge(node, neighbor, weight=mean_weight)
+            simplified_graph.add_edge(node, neighbor, weight=mean_weight if continuous else np.sign(mean_weight))
     
     print(excluded)
     
@@ -558,7 +527,7 @@ def calculate_balance_metrics(graph, null_models: list,
 
     for i in range(NumberOfRandoms):
         null_model_distribution.append(calculate_bw(simplified_null_model[i]))
-        print(f"Calculated {i + 1}/{NumberOfRandoms}")
+        print(i, end=' ')
 
     null_model_distribution = np.array(null_model_distribution)
     
@@ -571,7 +540,7 @@ def calculate_balance_metrics(graph, null_models: list,
     percentile = (np.sum(np.array(null_model_distribution) < b_w) / len(null_model_distribution)) * 100
     
     results = {
-        'B_w': b_w, 
+        'bw': b_w, 
         "mean": mean, 
         "std": std,
         "z-score": (b_w - mean) / std,
@@ -809,3 +778,338 @@ def kolmogorov_smirnov(triangles_graph: dict, null_triangles: dict) -> None:
         else:
             print(f"{subreddit:30s} | No data available")
 
+def top_nodes_stats(graph: nx.Graph, k: int):
+    # one-column + triangle-product column + triangle-sign-count column; per-node plots for top-k nodes
+    # ensure degrees are sorted in descending order
+    top_k = sorted(graph.degree(), key=lambda x: x[1], reverse=True)[:min(k, graph.number_of_nodes())]
+    top_nodes = [n for n, _ in top_k]
+
+    print("Nodes plotted in descending degree order:")
+    for n, d in top_k:
+        print(f"  {n}: {d}")
+
+    # helper to read edge weight
+    def _get_weight(g, u, v):
+        attr = g[u][v]
+        if isinstance(attr, dict):
+            return attr.get("weight", 1.0)
+        try:
+            return float(attr)
+        except Exception:
+            return 1.0
+
+    # Build triangles with node identities and weights (avoid duplicates)
+    found = {}
+    for n1 in graph.nodes():
+        for n2 in graph.neighbors(n1):
+            for n3 in graph.neighbors(n2):
+                if graph.has_edge(n1, n3):
+                    tri = tuple(sorted([n1, n2, n3]))
+                    if tri not in found:
+                        w12 = _get_weight(graph, tri[0], tri[1])
+                        w13 = _get_weight(graph, tri[0], tri[2])
+                        w23 = _get_weight(graph, tri[1], tri[2])
+                        found[tri] = (tri, (w12, w13, w23))
+
+    triangles_with_nodes = list(found.values())
+
+    # Compute global triangle products (same KDE for all nodes)
+    global_products = np.array([float(ws[0] * ws[1] * ws[2]) for _, ws in triangles_with_nodes], dtype=float)
+
+    # Precompute KDE for the entire-graph triangle-product distribution
+    global_kde = None
+    x_vals_global = None
+    y_vals_global = None
+    if global_products.size > 1:
+        try:
+            global_kde = gaussian_kde(global_products)
+            x_min_g, x_max_g = global_products.min(), global_products.max()
+            pad_g = max(0.05 * (x_max_g - x_min_g), 1e-12)
+            x_vals_global = np.linspace(x_min_g - pad_g, x_max_g + pad_g, 300)
+            # density values (no scaling) so KDE is identical across subplots
+            y_vals_global = global_kde(x_vals_global)
+        except Exception:
+            global_kde = None
+
+    # Map node -> list of triangle product weights it participates in
+    node_triangle_products = defaultdict(list)
+    # Map node -> list of counts of positive edges (0..3) for each triangle it participates in
+    node_triangle_pos_counts = defaultdict(list)
+    for nodes, weights in triangles_with_nodes:
+        prod = float(weights[0] * weights[1] * weights[2])
+        pos_count = int(sum(1 for w in weights if w > 0))
+        for n in nodes:
+            node_triangle_products[n].append(prod)
+            node_triangle_pos_counts[n].append(pos_count)
+
+    # Define fixed 21 bins centered on -1.0, -0.9, ... , 1.0
+    centers = np.linspace(-1.0, 1.0, 21)
+    # edges are centers +/- 0.05 -> from -1.05 to 1.05 inclusive (22 edges)
+    bins_edges = np.linspace(centers[0] - 0.05, centers[-1] + 0.05, len(centers) + 1)
+
+    # compute global mean/std for z-score (robust if variables not present)
+    if global_products.size > 0:
+        global_mean = np.mean(global_products)
+        global_std = np.std(global_products, ddof=0)
+    else:
+        global_mean = 0.0
+        global_std = 0.0
+
+    # Prepare subplots: three columns (left = incident edge weights, middle = global KDE + per-node mean + stats, right = triangle sign-count histogram)
+    rows = len(top_nodes)
+    fig, axes = plt.subplots(rows, 3, figsize=(18, 2.5 * rows))
+    axes = np.atleast_2d(axes)
+
+    for i, (node, deg) in enumerate(top_k):
+        ax_w = axes[i, 0]  # edge-weight histogram for node
+        ax_p = axes[i, 1]  # triangle-product KDE (global) + per-node stats
+        ax_t = axes[i, 2]  # triangle sign-count histogram for node
+
+        # collect weights of edges incident to this node
+        weights = []
+        for nbr, attr in graph[node].items():
+            if nbr == node:
+                continue  # skip self-loops
+            if isinstance(attr, dict):
+                w = attr.get("weight", 1.0)
+            else:
+                try:
+                    w = float(attr)
+                except Exception:
+                    w = 1.0
+            weights.append(w)
+
+        # Left: incident edge weight histogram (fixed 21 bins centered -1..1)
+        if len(weights) == 0:
+            ax_w.text(0.5, 0.5, "No edges", ha="center", va="center")
+            ax_w.set_xticks([])
+            ax_w.set_yticks([])
+        else:
+            ax_w.hist(weights, bins=bins_edges, color="skyblue", edgecolor="k", alpha=0.9)
+            mean_w = np.mean(weights)
+            ax_w.axvline(mean_w, color="red", linestyle="--", label=f"mean={mean_w:.4f}")
+            ax_w.set_xlabel("Edge weight")
+            ax_w.set_ylabel("Frequency")
+            ax_w.legend(fontsize="small")
+            ax_w.set_xticks(centers)
+            ax_w.set_xlim(bins_edges[0], bins_edges[-1])
+
+        ax_w.set_title(f"{node} (deg={deg})", loc="left")
+
+        # Middle: only global KDE (same for all nodes) + per-node mean vertical and stats (z-score + percentile)
+        tri_prods = node_triangle_products.get(node, [])
+        if len(tri_prods) == 0:
+            ax_p.text(0.5, 0.5, "No triangles", ha="center", va="center")
+            ax_p.set_xticks([])
+            ax_p.set_yticks([])
+        else:
+            # plot global KDE (density) if available
+            if global_kde is not None:
+                ax_p.plot(x_vals_global, y_vals_global, color="darkgreen", label="Global KDE")
+                ax_p.set_xlabel("Triangle edge-weight product")
+                ax_p.set_ylabel("Density")
+                # keep same y-limits for all nodes based on global KDE
+                ax_p.set_ylim(0, y_vals_global.max() * 1.05)
+                ax_p.set_xlim(x_vals_global[0], x_vals_global[-1])
+            else:
+                # fallback: show a simple histogram of global products if KDE failed
+                ax_p.hist(global_products, bins=bins_edges, color="lightgreen", edgecolor="k", alpha=0.7, density=True)
+                ax_p.set_xlabel("Triangle edge-weight product")
+                ax_p.set_ylabel("Density")
+                ax_p.set_xticks(centers)
+                ax_p.set_xlim(bins_edges[0], bins_edges[-1])
+
+            # per-node mean (computed only on node's triangle products)
+            arr = np.asarray(tri_prods, dtype=float)
+            mean_p = np.mean(arr)
+            ax_p.axvline(mean_p, color="red", linestyle="--", linewidth=1.5, label=f"mean={mean_p:.4e}")
+
+            # compute z-score (use global_mean/global_std) and percentile (empirical)
+            try:
+                if global_std == 0:
+                    z_score = np.nan
+                else:
+                    z_score = (mean_p - global_mean) / global_std
+                # percentile (empirical) of the observed mean within global_products
+                if global_products.size > 0:
+                    pct = float(percentileofscore(global_products, mean_p, kind="mean"))
+                else:
+                    pct = np.nan
+            except Exception:
+                z_score = np.nan
+                pct = np.nan
+
+            # annotate the plot (top-right inside axes)
+            stat_text = f"z = {z_score:.3f}\npercentile = {pct:.1f}%"
+            ax_p.text(
+                0.98, 0.95, stat_text,
+                transform=ax_p.transAxes,
+                ha="right", va="top",
+                fontsize="small",
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8, edgecolor="gray")
+            )
+
+            ax_p.legend(fontsize="small")
+            ax_p.set_title(f"Triangle products (n={len(arr)})", loc="left")
+
+        # Right: histogram of number of triangles as a function of number of positive edges (0..3)
+        pos_counts = node_triangle_pos_counts.get(node, [])
+        if len(pos_counts) == 0:
+            ax_t.text(0.5, 0.5, "No triangles", ha="center", va="center")
+            ax_t.set_xticks([])
+            ax_t.set_yticks([])
+        else:
+            counts = np.bincount(np.array(pos_counts, dtype=int), minlength=4)[:4]
+            labels = ["---", "+--", "++-", "+++"]
+            x = np.arange(len(labels))
+            bar_colors = ["#d73027", "#fc8d59", "#fee090", "#91bfdb"]  # color ramp
+            ax_t.bar(x, counts, color=bar_colors, edgecolor="k", alpha=0.9)
+            ax_t.set_xticks(x)
+            ax_t.set_xticklabels(labels, fontsize="small")
+            ax_t.set_ylabel("Triangle count")
+            ax_t.set_xlabel("Triangle edge configuration")
+            # annotate counts on bars
+            for xi, c in zip(x, counts):
+                ax_t.text(xi, c + max(1, 0.01 * sum(counts)), str(int(c)), ha="center", va="bottom", fontsize="small")
+            ax_t.set_title(f"Triangles by edges (n={len(pos_counts)})", loc="left")
+
+    plt.tight_layout()
+    plt.show()
+
+def calculate_balance_given_distribution(distributions_b, bw):
+    mean = np.mean(distributions_b)
+    std = np.std(distributions_b)
+    z_score = (bw - mean) / std if std != 0 else 0
+    percentile = (np.sum(np.array(distributions_b) < bw) / len(distributions_b)) * 100
+
+    results_b = {
+        'bw': bw,
+        'mean': mean,
+        'std': std,
+        'z-score': z_score,
+        'percentile': percentile
+    }
+
+    return results_b
+
+def plot_bw_distribution(distributions_b, results_b):
+    distribution = np.asarray(distributions_b)
+    title = "Graph"
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    # Try to extract the single graph's Bw value from results_b
+    b_w = results_b["bw"]
+
+    if distribution.size == 0:
+        ax.text(0.5, 0.5, "Empty distribution", ha='center')
+    else:
+        # KDE with automatic x-range based on data
+        kde = gaussian_kde(distribution)
+        x_min, x_max = min(distribution.min(), b_w), max(distribution.max(), b_w)
+        pad = max(0.05 * (x_max - x_min), 1e-6)
+        x_vals = np.linspace(x_min - pad, x_max + pad, 300)
+        y_vals = kde(x_vals)
+        ax.plot(x_vals, y_vals, color='skyblue', label='KDE')
+
+
+        if b_w is not None:
+            ax.axvline(b_w, color='red', linestyle='--', linewidth=2, label=f'Bw: {b_w:.4f}')
+
+    ax.set_title(title, loc='left', fontweight='bold')
+    ax.set_xlim(x_vals.min() if distribution.size else -0.01, x_vals.max() if distribution.size else 0.06)
+    ax.legend(loc='upper right')
+    ax.grid(axis='y', alpha=0.3)
+    plt.tight_layout()
+    plt.show()
+
+def calculate_kolmogorov_stats(triangles_graph, null_triangles):
+    D_distribution = []
+    results = []
+
+    all_triangles_dict = defaultdict(int)
+    for triangle in triangles_graph:
+        val = geo_abs(triangle)
+        all_triangles_dict[val] += 1
+    vals_all, cum_all = prepare_cumulative(all_triangles_dict)
+
+    null_all_dicts = []
+    for null_model in null_triangles:
+        null_all = defaultdict(int)
+        for triangle in null_model:
+            val = geo_abs(triangle)
+            null_all[val] += 1
+        null_all_dicts.append(null_all)
+
+    vals_all_null, cum_all_null = average_null_models(null_all_dicts)
+
+    for null_all in null_all_dicts:
+        vals_null, cum_null = prepare_cumulative(null_all)
+        D_null_vs_avg = kolmogorov(vals_null, cum_null, vals_all_null, cum_all_null)
+        D_distribution.append(D_null_vs_avg)
+
+    D = kolmogorov(vals_all, cum_all, vals_all_null, cum_all_null)
+
+    mean = np.mean(D_distribution)
+    std = np.std(D_distribution)
+    percentile = (np.sum(np.array(D_distribution) < D) / len(D_distribution)) * 100
+
+    results = {
+        'D': D,
+        "mean": mean,
+        "std": std,
+        "z-score": (D - mean) / std if std != 0 else 0,
+        "percentile": percentile
+    }
+
+    return results, D_distribution
+
+def plot_kolmogorov(D_distribution, results):
+    # Adaptation for single-graph (dimensions reduced by one).
+    # Use existing D_distribution and results_df (or fallback to D) without re-importing.
+
+    # Extract single distribution and a sensible title
+    if isinstance(D_distribution, dict):
+        key = next(iter(D_distribution))
+        distribution = np.asarray(D_distribution[key])
+        title = f"Graph: {key}"
+    else:
+        distribution = np.asarray(D_distribution)
+        title = "Graph"
+
+    fig, ax = plt.subplots(figsize=(8, 4))
+
+    if distribution.size == 0:
+        ax.text(0.5, 0.5, "Empty distribution", ha='center')
+    else:
+        # Estimate KDE if there are enough points, otherwise show a rug/hist
+        if distribution.size > 1:
+            kde = gaussian_kde(distribution)
+            x_min, x_max = distribution.min(), distribution.max()
+            pad = max(0.05 * (x_max - x_min), 1e-6)
+            x_vals = np.linspace(x_min - pad, x_max + pad, 300)
+            y_vals = kde(x_vals)
+            ax.plot(x_vals, y_vals, color='skyblue', label='KDE')
+        else:
+            # single point -> plot a vertical marker and small histogram fallback
+            x_vals = np.array([distribution[0]])
+            ax.plot(x_vals, np.array([1.0]), marker='o', linestyle='', color='skyblue', label='Value')
+
+        d_val = results["D"]
+        if d_val is not None:
+            ax.axvline(d_val, color='red', linestyle='--', linewidth=2, label=f'D: {d_val:.4f}')
+
+        # Set x-limits based on data and optional D value
+        data_min = distribution.min()
+        data_max = distribution.max()
+        if d_val is not None:
+            data_min = min(data_min, d_val)
+            data_max = max(data_max, d_val)
+        pad = max(0.05 * (data_max - data_min if data_max != data_min else abs(data_max) + 1e-6), 1e-6)
+        ax.set_xlim(data_min - pad, data_max + pad)
+
+    ax.set_title(title, loc='left', fontweight='bold')
+    ax.legend(loc='upper right')
+    ax.grid(axis='y', alpha=0.3)
+    plt.tight_layout()
+    plt.show()
