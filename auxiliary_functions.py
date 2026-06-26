@@ -188,13 +188,17 @@ def calculate_bw(graph: nx.Graph, z: int = 3) -> float:
             max_eigenvalue = spla.eigsh(P.astype(float), k=1, which='LA', return_eigenvectors=False)[0]
             
     alfa = 2.0
-    matrix_to_invert = np.eye(n) * (alfa * max_eigenvalue) - P.toarray()
+    diag_coeff = max(alfa * max_eigenvalue, 1e-5)
+    matrix_to_invert = np.eye(n) * diag_coeff - P.toarray()
     
     try:
         c, lower = la.cho_factor(matrix_to_invert, check_finite=False)
         inv_matrix = la.cho_solve((c, lower), np.eye(n), check_finite=False)
     except la.LinAlgError:
-        inv_matrix = la.inv(matrix_to_invert, check_finite=False)
+        try:
+            inv_matrix = la.inv(matrix_to_invert, check_finite=False)
+        except la.LinAlgError:
+            inv_matrix = np.zeros((n, n))
         
     N_coo = N.tocoo()
     trace_val = np.sum(N_coo.data * inv_matrix[N_coo.row, N_coo.col])
@@ -939,7 +943,7 @@ def top_nodes_stats(graph: nx.Graph, k: int) -> None:
 # 7. COHESIVE FRAUDSTER GROUP DETECTION
 # ==============================================================================
 
-def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_density: float = 0.7, min_balance_ratio: float = 0.9) -> list[dict[str, Any]]:
+def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_density: float = 0.7, min_balance_ratio: float = 0.9, NumberOfRandoms: int = 100) -> list[dict[str, Any]]:
     """Detect cohesive groups of potential fraudsters in a signed graph.
     
     Args:
@@ -947,6 +951,7 @@ def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_de
         min_neg_degree: Minimum negative degree in G for a node to be considered.
         min_pos_density: Minimum positive edge density within the group.
         min_balance_ratio: Minimum triangle balance compliance inside the group.
+        NumberOfRandoms: Number of random realizations to generate for subgraph null models.
         
     Returns:
         List of dictionaries with group nodes, size, positive/negative densities,
@@ -961,19 +966,18 @@ def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_de
     if not candidate_nodes:
         return []
         
-    pos_graph = nx.Graph()
-    pos_graph.add_nodes_from(candidate_nodes)
+    candidate_graph = nx.Graph()
+    candidate_graph.add_nodes_from(candidate_nodes)
     for u, v in graph.edges():
-        if u in pos_graph and v in pos_graph:
+        if u in candidate_graph and v in candidate_graph:
             w = graph[u][v].get('weight', 1.0)
-            if w > 0:
-                pos_graph.add_edge(u, v, weight=w)
+            candidate_graph.add_edge(u, v, weight=w, pos_weight=(w if w > 0 else 0.0))
                 
     from networkx.algorithms.community import louvain_communities
     try:
-        communities = louvain_communities(pos_graph, seed=42)
+        communities = louvain_communities(candidate_graph, weight='pos_weight', seed=42)
     except Exception:
-        communities = list(nx.connected_components(pos_graph))
+        communities = list(nx.connected_components(candidate_graph))
         
     detected_groups = []
     
@@ -1023,6 +1027,11 @@ def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_de
         if balance_ratio < min_balance_ratio:
             continue
             
+        # Calculate Bw balance metrics for the subgraph (group)
+        group_subgraph = graph.subgraph(comm)
+        group_null_models = [generate_null_model(group_subgraph, (214013 * i + 2531011) % (1 << 31)) for i in range(NumberOfRandoms)]
+        group_bw_stats, _ = calculate_balance_metrics(group_subgraph, group_null_models, NumberOfRandoms)
+        
         detected_groups.append({
             'nodes': comm,
             'size': n,
@@ -1030,7 +1039,12 @@ def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_de
             'neg_density': neg_density,
             'total_triangles': triangles_inside,
             'balanced_triangles': balanced_triangles,
-            'balance_ratio': balance_ratio
+            'balance_ratio': balance_ratio,
+            'bw': group_bw_stats['bw'],
+            'bw_zscore': group_bw_stats['z-score'],
+            'bw_mean': group_bw_stats['mean'],
+            'bw_std': group_bw_stats['std'],
+            'bw_percentile': group_bw_stats['percentile']
         })
         
     detected_groups.sort(key=lambda x: x['size'], reverse=True)
@@ -1127,6 +1141,8 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
             f"Neg Density: {stats['neg_density']:.2f}\n"
             f"Balance Ratio: {stats['balance_ratio']:.2f}"
         )
+        if 'bw' in stats:
+            stats_text += f"\nBw: {stats['bw']:.4f}\nBw Z-score: {stats['bw_zscore']:.2f}"
         ax.text(
             0.02, 0.02, stats_text,
             transform=ax.transAxes,
