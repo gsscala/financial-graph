@@ -273,25 +273,53 @@ def plot_weight_distribution(graph: nx.Graph) -> None:
     
     # Left panel: Weight distribution
     ax_weight = axes[0]
-    counts, _, _ = ax_weight.hist(weights, bins=WEIGHT_BIN_EDGES, edgecolor="black")
+    ax_weight.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.7)
+    ax_weight.set_axisbelow(True)
+    
+    counts, bins, patches = ax_weight.hist(weights, bins=WEIGHT_BIN_EDGES, edgecolor="black", alpha=0.85)
+    
+    # Color patches dynamically based on weight values
+    for patch, bin_left, bin_right in zip(patches, WEIGHT_BIN_EDGES[:-1], WEIGHT_BIN_EDGES[1:]):
+        center = (bin_left + bin_right) / 2
+        if center < -0.05:
+            patch.set_facecolor(plt.cm.Reds(0.3 + 0.7 * abs(center)))
+        elif center > 0.05:
+            patch.set_facecolor(plt.cm.Greens(0.3 + 0.7 * center))
+        else:
+            patch.set_facecolor('#bdc3c7')
+            
     ax_weight.set_xticks(WEIGHT_BIN_CENTERS)
     ax_weight.set_xticklabels([f"{x:.1f}" for x in WEIGHT_BIN_CENTERS], rotation=60)
     add_percentage_labels(ax_weight, counts, WEIGHT_BIN_EDGES)
-    ax_weight.set_title("Weight Distribution", fontsize=20)
+    ax_weight.set_title("Weight Distribution", fontsize=20, fontweight='bold')
     ax_weight.set_xlabel("Weight", fontsize=18)
     ax_weight.set_ylabel("Count", fontsize=18)
     ax_weight.tick_params(axis='both', labelsize=16)
+    ax_weight.spines['top'].set_visible(False)
+    ax_weight.spines['right'].set_visible(False)
     
     # Right panel: Sign distribution
     ax_sign = axes[1]
-    sign_counts, _, _ = ax_sign.hist(np.sign(weights), bins=SIGN_BIN_EDGES, 
-                                    edgecolor="black", rwidth=0.8)
+    ax_sign.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.7)
+    ax_sign.set_axisbelow(True)
+    
+    sign_counts, bins, patches = ax_sign.hist(np.sign(weights), bins=SIGN_BIN_EDGES, 
+                                    edgecolor="black", rwidth=0.8, alpha=0.85)
+                                    
+    # Color coding the 3 bars: negative (red), neutral (gray), positive (green)
+    colors = ['#e74c3c', '#bdc3c7', '#2ecc71']
+    for idx, patch in enumerate(patches):
+        if idx < len(colors):
+            patch.set_facecolor(colors[idx])
+            
     ax_sign.set_xticks(SIGN_TICK_POSITIONS)
     ax_sign.set_xticklabels(SIGN_LABELS, fontsize=16)
     add_percentage_labels(ax_sign, sign_counts, SIGN_BIN_EDGES)
-    ax_sign.set_title("Sign Distribution", fontsize=20)
+    ax_sign.set_title("Sign Distribution", fontsize=20, fontweight='bold')
     ax_sign.set_xlabel("Sign", fontsize=18)
     ax_sign.tick_params(axis='both', labelsize=16)
+    ax_sign.spines['top'].set_visible(False)
+    ax_sign.spines['right'].set_visible(False)
 
     plt.tight_layout()
     plt.show()
@@ -433,32 +461,55 @@ def plot_triangle_distribution(triangles_graph: list) -> None:
 
     # Left panel: Mean of triangle weights
     ax_mean = axes[0]
+    ax_mean.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.7)
+    ax_mean.set_axisbelow(True)
+    
     if means.size > 0:
-        counts, _, _ = ax_mean.hist(means, bins=WEIGHT_BIN_EDGES, edgecolor="black")
+        counts, bins, patches = ax_mean.hist(means, bins=WEIGHT_BIN_EDGES, edgecolor="black", alpha=0.85)
+        # Color patches dynamically
+        for patch, bin_left, bin_right in zip(patches, WEIGHT_BIN_EDGES[:-1], WEIGHT_BIN_EDGES[1:]):
+            center = (bin_left + bin_right) / 2
+            if center < -0.05:
+                patch.set_facecolor(plt.cm.Reds(0.3 + 0.7 * abs(center)))
+            elif center > 0.05:
+                patch.set_facecolor(plt.cm.Greens(0.3 + 0.7 * center))
+            else:
+                patch.set_facecolor('#bdc3c7')
         ax_mean.set_xticks(WEIGHT_BIN_CENTERS)
         ax_mean.set_xticklabels([f"{x:.1f}" for x in WEIGHT_BIN_CENTERS], rotation=60)
         add_percentage_labels(ax_mean, counts, WEIGHT_BIN_EDGES)
     else:
         ax_mean.text(0.5, 0.5, 'No triangles', ha='center', va='center', fontsize=14, transform=ax_mean.transAxes)
 
-    ax_mean.set_title("Triangle Mean Weights", fontsize=20)
+    ax_mean.set_title("Triangle Mean Weights", fontsize=20, fontweight='bold')
     ax_mean.set_xlabel("Mean weight", fontsize=18)
     ax_mean.set_ylabel("Count", fontsize=18)
     ax_mean.tick_params(axis='both', labelsize=16)
+    ax_mean.spines['top'].set_visible(False)
+    ax_mean.spines['right'].set_visible(False)
 
     # Right panel: Sign of product of edges
     ax_sign = axes[1]
+    ax_sign.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.7)
+    ax_sign.set_axisbelow(True)
+    
     if signs.size > 0:
-        sign_counts, _, _ = ax_sign.hist(signs, bins=SIGN_BIN_EDGES, edgecolor="black", rwidth=0.8)
+        sign_counts, bins, patches = ax_sign.hist(signs, bins=SIGN_BIN_EDGES, edgecolor="black", rwidth=0.8, alpha=0.85)
+        colors = ['#e74c3c', '#bdc3c7', '#2ecc71']
+        for idx, patch in enumerate(patches):
+            if idx < len(colors):
+                patch.set_facecolor(colors[idx])
         ax_sign.set_xticks(SIGN_TICK_POSITIONS)
         ax_sign.set_xticklabels(SIGN_LABELS, fontsize=16)
         add_percentage_labels(ax_sign, sign_counts, SIGN_BIN_EDGES)
     else:
         ax_sign.text(0.5, 0.5, 'No triangles', ha='center', va='center', fontsize=14, transform=ax_sign.transAxes)
 
-    ax_sign.set_title("Sign of Triangle Product", fontsize=20)
+    ax_sign.set_title("Sign of Triangle Product", fontsize=20, fontweight='bold')
     ax_sign.set_xlabel("Sign", fontsize=18)
     ax_sign.tick_params(axis='both', labelsize=16)
+    ax_sign.spines['top'].set_visible(False)
+    ax_sign.spines['right'].set_visible(False)
 
     plt.tight_layout()
     plt.show()
@@ -885,16 +936,29 @@ def top_nodes_stats(graph: nx.Graph, k: int):
             ax_w.set_xticks([])
             ax_w.set_yticks([])
         else:
-            ax_w.hist(weights, bins=bins_edges, color="skyblue", edgecolor="k", alpha=0.9)
+            ax_w.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.7)
+            ax_w.set_axisbelow(True)
+            counts, bins, patches = ax_w.hist(weights, bins=bins_edges, edgecolor="k", alpha=0.85)
+            # Color patches dynamically based on weight
+            for patch, bin_left, bin_right in zip(patches, bins_edges[:-1], bins_edges[1:]):
+                center = (bin_left + bin_right) / 2
+                if center < -0.05:
+                    patch.set_facecolor(plt.cm.Reds(0.3 + 0.7 * abs(center)))
+                elif center > 0.05:
+                    patch.set_facecolor(plt.cm.Greens(0.3 + 0.7 * center))
+                else:
+                    patch.set_facecolor('#bdc3c7')
             mean_w = np.mean(weights)
-            ax_w.axvline(mean_w, color="red", linestyle="--", label=f"mean={mean_w:.4f}")
+            ax_w.axvline(mean_w, color="red", linestyle="--", linewidth=1.5, label=f"mean={mean_w:.4f}")
             ax_w.set_xlabel("Edge weight")
             ax_w.set_ylabel("Frequency")
-            ax_w.legend(fontsize="small")
+            ax_w.legend(fontsize="small", loc="upper left")
             ax_w.set_xticks(centers)
             ax_w.set_xlim(bins_edges[0], bins_edges[-1])
+            ax_w.spines['top'].set_visible(False)
+            ax_w.spines['right'].set_visible(False)
 
-        ax_w.set_title(f"{node} (deg={deg})", loc="left")
+        ax_w.set_title(f"{node} (deg={deg})", loc="left", fontweight="bold")
 
         # Middle: only global KDE (same for all nodes) + per-node mean vertical and stats (z-score + percentile)
         tri_prods = node_triangle_products.get(node, [])
@@ -903,9 +967,12 @@ def top_nodes_stats(graph: nx.Graph, k: int):
             ax_p.set_xticks([])
             ax_p.set_yticks([])
         else:
+            ax_p.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.7)
+            ax_p.set_axisbelow(True)
             # plot global KDE (density) if available
             if global_kde is not None:
-                ax_p.plot(x_vals_global, y_vals_global, color="darkgreen", label="Global KDE")
+                ax_p.plot(x_vals_global, y_vals_global, color="darkgreen", linewidth=1.5, label="Global KDE")
+                ax_p.fill_between(x_vals_global, y_vals_global, color="darkgreen", alpha=0.15)
                 ax_p.set_xlabel("Triangle edge-weight product")
                 ax_p.set_ylabel("Density")
                 # keep same y-limits for all nodes based on global KDE
@@ -924,13 +991,12 @@ def top_nodes_stats(graph: nx.Graph, k: int):
             mean_p = np.mean(arr)
             ax_p.axvline(mean_p, color="red", linestyle="--", linewidth=1.5, label=f"mean={mean_p:.4e}")
 
-            # compute z-score (use global_mean/global_std) and percentile (empirical)
+            # compute z-score and percentile
             try:
                 if global_std == 0:
                     z_score = np.nan
                 else:
                     z_score = (mean_p - global_mean) / global_std
-                # percentile (empirical) of the observed mean within global_products
                 if global_products.size > 0:
                     pct = float(percentileofscore(global_products, mean_p, kind="mean"))
                 else:
@@ -939,18 +1005,20 @@ def top_nodes_stats(graph: nx.Graph, k: int):
                 z_score = np.nan
                 pct = np.nan
 
-            # annotate the plot (top-right inside axes)
+            # annotate the plot
             stat_text = f"z = {z_score:.3f}\npercentile = {pct:.1f}%"
             ax_p.text(
                 0.98, 0.95, stat_text,
                 transform=ax_p.transAxes,
                 ha="right", va="top",
                 fontsize="small",
-                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.8, edgecolor="gray")
+                bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.85, edgecolor="gray")
             )
 
-            ax_p.legend(fontsize="small")
-            ax_p.set_title(f"Triangle products (n={len(arr)})", loc="left")
+            ax_p.legend(fontsize="small", loc="upper left")
+            ax_p.set_title(f"Triangle products (n={len(arr)})", loc="left", fontweight="bold")
+            ax_p.spines['top'].set_visible(False)
+            ax_p.spines['right'].set_visible(False)
 
         # Right: histogram of number of triangles as a function of number of positive edges (0..3)
         pos_counts = node_triangle_pos_counts.get(node, [])
@@ -959,11 +1027,13 @@ def top_nodes_stats(graph: nx.Graph, k: int):
             ax_t.set_xticks([])
             ax_t.set_yticks([])
         else:
+            ax_t.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.5)
+            ax_t.set_axisbelow(True)
             counts = np.bincount(np.array(pos_counts, dtype=int), minlength=4)[:4]
             labels = ["---", "+--", "++-", "+++"]
             x = np.arange(len(labels))
             bar_colors = ["#d73027", "#fc8d59", "#fee090", "#91bfdb"]  # color ramp
-            ax_t.bar(x, counts, color=bar_colors, edgecolor="k", alpha=0.9)
+            ax_t.bar(x, counts, color=bar_colors, edgecolor="k", alpha=0.85)
             ax_t.set_xticks(x)
             ax_t.set_xticklabels(labels, fontsize="small")
             ax_t.set_ylabel("Triangle count")
@@ -971,7 +1041,9 @@ def top_nodes_stats(graph: nx.Graph, k: int):
             # annotate counts on bars
             for xi, c in zip(x, counts):
                 ax_t.text(xi, c + max(1, 0.01 * sum(counts)), str(int(c)), ha="center", va="bottom", fontsize="small")
-            ax_t.set_title(f"Triangles by edges (n={len(pos_counts)})", loc="left")
+            ax_t.set_title(f"Triangles by edges (n={len(pos_counts)})", loc="left", fontweight="bold")
+            ax_t.spines['top'].set_visible(False)
+            ax_t.spines['right'].set_visible(False)
 
     plt.tight_layout()
     plt.show()
@@ -994,9 +1066,11 @@ def calculate_balance_given_distribution(distributions_b, bw):
 
 def plot_bw_distribution(distributions_b, results_b):
     distribution = np.asarray(distributions_b)
-    title = "Graph"
+    title = "Graph Bw Metric Distribution"
 
     fig, ax = plt.subplots(figsize=(8, 4))
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.7)
+    ax.set_axisbelow(True)
 
     # Try to extract the single graph's Bw value from results_b
     b_w = results_b["bw"]
@@ -1010,16 +1084,17 @@ def plot_bw_distribution(distributions_b, results_b):
         pad = max(0.05 * (x_max - x_min), 1e-6)
         x_vals = np.linspace(x_min - pad, x_max + pad, 300)
         y_vals = kde(x_vals)
-        ax.plot(x_vals, y_vals, color='skyblue', label='KDE')
-
+        ax.plot(x_vals, y_vals, color='#3498db', linewidth=2, label='KDE (Null Models)')
+        ax.fill_between(x_vals, y_vals, color='#3498db', alpha=0.3)
 
         if b_w is not None:
-            ax.axvline(b_w, color='red', linestyle='--', linewidth=2, label=f'Bw: {b_w:.4f}')
+            ax.axvline(b_w, color='#e74c3c', linestyle='--', linewidth=2, label=f'Real Bw: {b_w:.4f}')
 
-    ax.set_title(title, loc='left', fontweight='bold')
+    ax.set_title(title, loc='left', fontweight='bold', fontsize=12)
     ax.set_xlim(x_vals.min() if distribution.size else -0.01, x_vals.max() if distribution.size else 0.06)
     ax.legend(loc='upper right')
-    ax.grid(axis='y', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.show()
 
@@ -1072,12 +1147,14 @@ def plot_kolmogorov(D_distribution, results):
     if isinstance(D_distribution, dict):
         key = next(iter(D_distribution))
         distribution = np.asarray(D_distribution[key])
-        title = f"Graph: {key}"
+        title = f"KS Statistic Distribution: {key}"
     else:
         distribution = np.asarray(D_distribution)
-        title = "Graph"
+        title = "KS Statistic Distribution"
 
     fig, ax = plt.subplots(figsize=(8, 4))
+    ax.grid(True, which='both', linestyle='--', linewidth=0.5, color='lightgray', alpha=0.7)
+    ax.set_axisbelow(True)
 
     if distribution.size == 0:
         ax.text(0.5, 0.5, "Empty distribution", ha='center')
@@ -1089,15 +1166,16 @@ def plot_kolmogorov(D_distribution, results):
             pad = max(0.05 * (x_max - x_min), 1e-6)
             x_vals = np.linspace(x_min - pad, x_max + pad, 300)
             y_vals = kde(x_vals)
-            ax.plot(x_vals, y_vals, color='skyblue', label='KDE')
+            ax.plot(x_vals, y_vals, color='#2ecc71', linewidth=2, label='KDE (Null Models)')
+            ax.fill_between(x_vals, y_vals, color='#2ecc71', alpha=0.3)
         else:
             # single point -> plot a vertical marker and small histogram fallback
             x_vals = np.array([distribution[0]])
-            ax.plot(x_vals, np.array([1.0]), marker='o', linestyle='', color='skyblue', label='Value')
+            ax.plot(x_vals, np.array([1.0]), marker='o', linestyle='', color='#2ecc71', label='Value')
 
         d_val = results["D"]
         if d_val is not None:
-            ax.axvline(d_val, color='red', linestyle='--', linewidth=2, label=f'D: {d_val:.4f}')
+            ax.axvline(d_val, color='#e74c3c', linestyle='--', linewidth=2, label=f'Real D: {d_val:.4f}')
 
         # Set x-limits based on data and optional D value
         data_min = distribution.min()
@@ -1108,8 +1186,313 @@ def plot_kolmogorov(D_distribution, results):
         pad = max(0.05 * (data_max - data_min if data_max != data_min else abs(data_max) + 1e-6), 1e-6)
         ax.set_xlim(data_min - pad, data_max + pad)
 
-    ax.set_title(title, loc='left', fontweight='bold')
+    ax.set_title(title, loc='left', fontweight='bold', fontsize=12)
     ax.legend(loc='upper right')
-    ax.grid(axis='y', alpha=0.3)
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
     plt.tight_layout()
     plt.show()
+
+
+def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_density: float = 0.7, min_balance_ratio: float = 0.9) -> list:
+    """
+    Detect groups of potential fraudsters in a signed graph.
+    
+    A group is defined as a set of nodes S where:
+    - Each node in S has at least min_neg_degree negative incident edges in the global graph G.
+    - S forms a dense positive subgraph (density of positive edges inside S >= min_pos_density).
+    - S is in almost perfect structural balance (triangle balance ratio >= min_balance_ratio).
+    
+    Args:
+        graph: Undirected signed NetworkX graph with 'weight' attribute on edges (+1, -1, or continuous).
+        min_neg_degree: Minimum number of negative incident edges in G for each node in a group.
+        min_pos_density: Minimum positive edge density within the group.
+        min_balance_ratio: Minimum ratio of balanced triangles to total triangles within the group.
+        
+    Returns:
+        List of dictionaries, each containing:
+        - 'nodes': Set of node IDs in the group.
+        - 'size': Number of nodes in the group.
+        - 'pos_density': Density of positive edges within the group.
+        - 'neg_density': Density of negative edges within the group.
+        - 'total_triangles': Total triangles inside the induced subgraph on S.
+        - 'balanced_triangles': Number of balanced triangles inside S.
+        - 'balance_ratio': Ratio of balanced triangles to total triangles.
+    """
+    # 1. Filter nodes by global negative degree
+    candidate_nodes = []
+    for node in graph.nodes():
+        neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
+        if neg_deg >= min_neg_degree:
+            candidate_nodes.append(node)
+            
+    if not candidate_nodes:
+        return []
+        
+    # 2. Build the positive edge induced subgraph on candidate nodes
+    pos_graph = nx.Graph()
+    pos_graph.add_nodes_from(candidate_nodes)
+    for u, v in graph.edges():
+        if u in pos_graph and v in pos_graph:
+            w = graph[u][v].get('weight', 1.0)
+            if w > 0:
+                pos_graph.add_edge(u, v, weight=w)
+                
+    # 3. Perform community detection using Louvain on the positive candidate graph
+    from networkx.algorithms.community import louvain_communities
+    try:
+        communities = louvain_communities(pos_graph, seed=42)
+    except Exception as e:
+        # Fallback to connected components if Louvain fails for some reason
+        communities = list(nx.connected_components(pos_graph))
+        
+    detected_groups = []
+    
+    # 4. Filter and compute metrics for each community/group
+    for comm in communities:
+        if len(comm) < 3: # Need at least 3 nodes to form triangles and densities
+            continue
+            
+        nodes_list = list(comm)
+        n = len(comm)
+        possible_edges = n * (n - 1) / 2
+        
+        # Count positive and negative edges in the induced subgraph G[comm]
+        pos_edges_count = 0
+        neg_edges_count = 0
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                u, v = nodes_list[i], nodes_list[j]
+                if graph.has_edge(u, v):
+                    w = graph[u][v].get('weight', 1.0)
+                    if w > 0:
+                        pos_edges_count += 1
+                    elif w < 0:
+                        neg_edges_count += 1
+                        
+        pos_density = pos_edges_count / possible_edges
+        neg_density = neg_edges_count / possible_edges
+        
+        # Filter by positive density
+        if pos_density < min_pos_density:
+            continue
+            
+        # Calculate triangles and structural balance inside the group
+        triangles_inside = 0
+        balanced_triangles = 0
+        
+        for i in range(n):
+            for j in range(i + 1, n):
+                for k in range(j + 1, n):
+                    u, v, w_node = nodes_list[i], nodes_list[j], nodes_list[k]
+                    if graph.has_edge(u, v) and graph.has_edge(u, w_node) and graph.has_edge(v, w_node):
+                        triangles_inside += 1
+                        # Get edge signs
+                        s1 = np.sign(graph[u][v].get('weight', 1.0))
+                        s2 = np.sign(graph[u][w_node].get('weight', 1.0))
+                        s3 = np.sign(graph[v][w_node].get('weight', 1.0))
+                        
+                        # A triangle is balanced if the product of signs is positive
+                        neg_count = sum(1 for s in (s1, s2, s3) if s < 0)
+                        if neg_count % 2 == 0:
+                            balanced_triangles += 1
+                            
+        if triangles_inside > 0:
+            balance_ratio = balanced_triangles / triangles_inside
+        else:
+            balance_ratio = 1.0
+            
+        # Filter by balance ratio
+        if balance_ratio < min_balance_ratio:
+            continue
+            
+        detected_groups.append({
+            'nodes': comm,
+            'size': n,
+            'pos_density': pos_density,
+            'neg_density': neg_density,
+            'total_triangles': triangles_inside,
+            'balanced_triangles': balanced_triangles,
+            'balance_ratio': balance_ratio
+        })
+        
+    # Sort groups by size descending
+    detected_groups.sort(key=lambda x: x['size'], reverse=True)
+    return detected_groups
+
+
+def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Fraudster Group", save_path: str = None, ax=None, stats: dict = None):
+    """
+    Visualize a detected fraudster group with force-directed gravity.
+    
+    Nodes in the group are plotted, with positive edges colored green and negative edges colored red.
+    Nodes are colored based on their global negative degree.
+    """
+    # Create the induced subgraph
+    subgraph = graph.subgraph(group_nodes)
+    
+    # Define layout weights (absolute weight for spring tension / gravity)
+    # NetworkX spring_layout will use this attribute to pull strongly connected nodes closer
+    layout_graph = nx.Graph()
+    layout_graph.add_nodes_from(subgraph.nodes())
+    for u, v in subgraph.edges():
+        w = abs(subgraph[u][v].get('weight', 1.0))
+        layout_graph.add_edge(u, v, weight=max(w, 0.1))
+        
+    n_nodes = len(group_nodes)
+    k_distance = 1.8 / np.sqrt(n_nodes) if n_nodes > 0 else 1.0
+    pos = nx.spring_layout(layout_graph, weight='weight', k=k_distance, iterations=120, seed=42)
+    
+    # Calculate global negative degrees for node coloring and sizing
+    node_neg_degs = []
+    for node in group_nodes:
+        neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
+        node_neg_degs.append(neg_deg)
+        
+    # Scale node size based on suspicion (gravity)
+    node_sizes = [250 + 120 * deg for deg in node_neg_degs]
+        
+    # Split edges into positive and negative
+    pos_edges = []
+    neg_edges = []
+    pos_widths = []
+    neg_widths = []
+    
+    for u, v in subgraph.edges():
+        w = subgraph[u][v].get('weight', 1.0)
+        if w > 0:
+            pos_edges.append((u, v))
+            pos_widths.append(1.0 + 3.0 * abs(w))
+        elif w < 0:
+            neg_edges.append((u, v))
+            neg_widths.append(1.0 + 3.0 * abs(w))
+            
+    # Handle axis
+    if ax is None:
+        fig, ax = plt.subplots(figsize=(8, 6))
+        show_colorbar = True
+        show_plot = True
+    else:
+        show_colorbar = False
+        show_plot = False
+        
+    # Draw nodes with YlOrRd colormap
+    cmap = plt.cm.YlOrRd
+    nodes = nx.draw_networkx_nodes(
+        subgraph, pos, ax=ax,
+        node_color=node_neg_degs,
+        node_size=node_sizes,
+        cmap=cmap,
+        edgecolors='#2c3e50',
+        linewidths=1.5,
+        alpha=0.9
+    )
+    
+    # Draw positive edges in vibrant teal/green
+    if pos_edges:
+        nx.draw_networkx_edges(
+            subgraph, pos, ax=ax,
+            edgelist=pos_edges,
+            edge_color='#2ecc71',
+            width=pos_widths,
+            alpha=0.8
+        )
+    
+    # Draw negative edges in coral red
+    if neg_edges:
+        nx.draw_networkx_edges(
+            subgraph, pos, ax=ax,
+            edgelist=neg_edges,
+            edge_color='#e74c3c',
+            width=neg_widths,
+            style='dashed',
+            alpha=0.8
+        )
+    
+    # Draw labels
+    nx.draw_networkx_labels(subgraph, pos, ax=ax, font_size=8, font_weight='bold', font_color='#2c3e50')
+    
+    # Draw stats if provided inside a textbox
+    if stats is not None:
+        stats_text = (
+            f"Size: {stats['size']}\n"
+            f"Pos Density: {stats['pos_density']:.2f}\n"
+            f"Neg Density: {stats['neg_density']:.2f}\n"
+            f"Balance Ratio: {stats['balance_ratio']:.2f}"
+        )
+        ax.text(
+            0.02, 0.02, stats_text,
+            transform=ax.transAxes,
+            fontsize=8.5,
+            verticalalignment='bottom',
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="white", alpha=0.9, edgecolor="lightgray")
+        )
+        
+    # Colorbar for global negative degree
+    if show_colorbar:
+        cbar = fig.colorbar(nodes, ax=ax, orientation='horizontal', pad=0.08, shrink=0.7)
+        cbar.set_label("Global Negative Degree (Suspicion Level)", fontsize=10)
+        cbar.ax.tick_params(labelsize=8)
+        
+    ax.set_title(title, fontsize=12, fontweight='bold', color='#2c3e50')
+    ax.axis('off')
+    
+    if show_plot:
+        plt.tight_layout()
+        if save_path:
+            plt.savefig(save_path, dpi=300, bbox_inches='tight')
+            plt.close()
+        else:
+            plt.show()
+
+
+def plot_all_fraudster_groups(graph: nx.Graph, groups: list, title: str = "Detected Fraudster Groups", save_path: str = None):
+    """
+    Plot all detected groups on a grid of subplots within a single Matplotlib figure.
+    Includes a single shared figure-level legend at the bottom.
+    """
+    n_groups = len(groups)
+    if n_groups == 0:
+        print("No groups to plot.")
+        return
+        
+    # Determine grid dimensions (2 columns)
+    n_cols = 2
+    n_rows = (n_groups + 1) // 2
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(14, 5 * n_rows))
+    axes = np.atleast_1d(axes).flatten()
+    
+    for idx, (group, ax) in enumerate(zip(groups, axes)):
+        plot_fraudster_group(
+            graph, 
+            group['nodes'], 
+            title=f"Group {idx+1} (Size {group['size']})", 
+            ax=ax, 
+            stats=group
+        )
+        
+    # Hide unused axes
+    for ax in axes[n_groups:]:
+        ax.axis('off')
+        
+    # Add a single global legend at the bottom of the figure
+    from matplotlib.lines import Line2D
+    legend_elements = [
+        Line2D([0], [0], color='#2ecc71', lw=3, label='Positive (Friendship Link)'),
+        Line2D([0], [0], color='#e74c3c', lw=3, linestyle='--', label='Negative (Conflict Link)')
+    ]
+    fig.legend(handles=legend_elements, loc='lower center', ncol=2, fontsize=12, frameon=True, edgecolor='lightgray')
+    
+    plt.suptitle(title, fontsize=16, fontweight='bold', y=0.99, color='#2c3e50')
+    
+    # Adjust layout to prevent overlap and leave space for the bottom legend
+    plt.tight_layout(rect=[0, 0.06, 1, 0.96])
+    
+    if save_path:
+        plt.savefig(save_path, dpi=300, bbox_inches='tight')
+        plt.close()
+    else:
+        plt.show()
+
