@@ -1112,11 +1112,6 @@ def plot_candidate_subsets_analysis(graph: nx.Graph, analysis_results: dict[str,
     for ax in axes[n_groups:]:
         ax.axis('off')
         
-    legend_elements = [
-        Line2D([0], [0], color='#2ecc71', lw=3, label='Positive (Friendship Link)'),
-        Line2D([0], [0], color='#e74c3c', lw=3, linestyle='--', label='Negative (Conflict Link)')
-    ]
-    fig.legend(handles=legend_elements, loc='lower center', ncol=2, fontsize=11, frameon=True, edgecolor='lightgray')
     plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.show()
@@ -1371,7 +1366,13 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
             alpha=0.8
         )
     
-    nx.draw_networkx_labels(subgraph, pos, ax=ax, font_size=8, font_weight='bold', font_color='#2c3e50')
+    labels = {}
+    for node in group_nodes:
+        total_deg = graph.degree(node)
+        neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
+        labels[node] = f"{node}\n{total_deg},{neg_deg}"
+        
+    nx.draw_networkx_labels(subgraph, pos, labels=labels, ax=ax, font_size=8, font_weight='bold', font_color='#2c3e50')
     
     if stats is not None:
         stats_text = (
@@ -1438,12 +1439,6 @@ def plot_all_fraudster_groups(graph: nx.Graph, groups: list[dict[str, Any]], tit
     for ax in axes[n_groups:]:
         ax.axis('off')
         
-    legend_elements = [
-        Line2D([0], [0], color='#2ecc71', lw=3, label='Positive (Friendship Link)'),
-        Line2D([0], [0], color='#e74c3c', lw=3, linestyle='--', label='Negative (Conflict Link)')
-    ]
-    fig.legend(handles=legend_elements, loc='lower center', ncol=2, fontsize=12, frameon=True, edgecolor='lightgray')
-    
     plt.suptitle(title, fontsize=16, fontweight='bold', y=0.99, color='#2c3e50')
     plt.tight_layout(rect=[0, 0.06, 1, 0.96])
     
