@@ -13,6 +13,7 @@ This module provides production-grade utilities for analyzing social network gra
 import os
 import json
 import random
+import itertools
 from collections import defaultdict
 from typing import Any
 
@@ -940,7 +941,233 @@ def top_nodes_stats(graph: nx.Graph, k: int) -> None:
 
 
 # ==============================================================================
-# 7. COHESIVE FRAUDSTER GROUP DETECTION
+# 7. EGO-NETWORK EXTRACTION & COMBINATORIAL SUBSET COHESION ANALYSIS
+# ==============================================================================
+
+def extract_ego_subgraphs(graph: nx.Graph, k: int = 5) -> tuple[nx.Graph, nx.Graph]:
+    """Extract ego-networks centered on the top-k nodes with most negative and -1.0 weight incident links.
+    
+    Args:
+        graph: Undirected signed NetworkX graph.
+        k: Number of top nodes to select for ego-network extraction.
+        
+    Returns:
+        Tuple of (negative_graph, negative1_graph), composed 1-hop ego networks.
+    """
+    negative_edges_count = defaultdict(lambda: [0, 0])
+    for u, v, data in graph.edges(data=True):
+        w = float(data.get("weight", 0.0))
+        if w < 0:
+            negative_edges_count[u][0] += 1
+            negative_edges_count[v][0] += 1
+        if w == -1.0:
+            negative_edges_count[u][1] += 1
+            negative_edges_count[v][1] += 1
+
+    top_neg_nodes = sorted(negative_edges_count.keys(), key=lambda n: negative_edges_count[n][0], reverse=True)[:k]
+    top_neg1_nodes = sorted(negative_edges_count.keys(), key=lambda n: negative_edges_count[n][1], reverse=True)[:k]
+
+    negative_graph = nx.compose_all([nx.ego_graph(graph, node, radius=1) for node in top_neg_nodes])
+    negative1_graph = nx.compose_all([nx.ego_graph(graph, node, radius=1) for node in top_neg1_nodes])
+
+    print(f"Top nodes with most negative links: {top_neg_nodes}")
+    print(f"Top nodes with most -1.0 links: {top_neg1_nodes}")
+    print(f"\\nNegative Subgraph: {negative_graph.number_of_nodes()} nodes, {negative_graph.number_of_edges()} edges")
+    print(f"Negative1 Subgraph: {negative1_graph.number_of_nodes()} nodes, {negative1_graph.number_of_edges()} edges")
+
+    return negative_graph, negative1_graph
+
+
+def analyze_candidate_subsets(
+    graph: nx.Graph,
+    min_neg_degree: int = 2,
+    min_neg_ratio: float = 0.15,
+    min_subset_size: int = 3,
+    max_subset_size: int = 6,
+    min_pos_cohesion: float = 0.6,
+    candidate_nodes: list[str] = None
+) -> dict[str, Any]:
+    """Examine candidate node subsets S by negative edge incidence criteria and check combinatorial subgraphs for cohesion and negative coverage.
+    
+    Args:
+        graph: Undirected signed Graph.
+        min_neg_degree: Minimum incident negative edges X required for a node in S (if candidate_nodes is not provided).
+        min_neg_ratio: Minimum fraction Y of incident negative edges out of total incident edges (if candidate_nodes is not provided).
+        min_subset_size: Minimum subset size to evaluate inside S.
+        max_subset_size: Maximum subset size to evaluate inside S.
+        min_pos_cohesion: Minimum fraction of positive edges within subset to be considered cohesive.
+        candidate_nodes: Optional list of pre-filtered candidate nodes. If provided, min_neg_degree and min_neg_ratio are ignored.
+        
+    Returns:
+        Dict containing subset S details, global negative coverage stats, and cohesive communities found.
+    """
+    total_global_neg_edges = sum(1 for _, _, data in graph.edges(data=True) if float(data.get("weight", 0.0)) < 0)
+    
+    if candidate_nodes is None:
+        candidate_nodes = []
+        for node in graph.nodes():
+            incident_edges = graph.edges(node, data=True)
+            total_deg = 0
+            neg_deg = 0
+            for _, _, data in incident_edges:
+                total_deg += 1
+                if float(data.get("weight", 0.0)) < 0:
+                    neg_deg += 1
+            neg_ratio = neg_deg / total_deg if total_deg > 0 else 0.0
+            if neg_deg >= min_neg_degree and neg_ratio >= min_neg_ratio:
+                candidate_nodes.append(node)
+            
+    cohesive_communities = []
+    search_nodes = sorted(candidate_nodes)
+    max_size = min(len(search_nodes), max_subset_size)
+    
+    for size in range(min_subset_size, max_size + 1):
+        for combo in itertools.combinations(search_nodes, size):
+            sub = graph.subgraph(combo)
+            internal_edges = sub.number_of_edges()
+            if internal_edges == 0:
+                continue
+            pos_edges = sum(1 for _, _, d in sub.edges(data=True) if float(d.get("weight", 0.0)) > 0)
+            neg_edges = internal_edges - pos_edges
+            pos_cohesion = pos_edges / internal_edges
+            
+            if pos_cohesion >= min_pos_cohesion:
+                covered_neg = set()
+                for u in combo:
+                    for _, v, d in graph.edges(u, data=True):
+                        if float(d.get("weight", 0.0)) < 0:
+                            edge_key = tuple(sorted((u, v)))
+                            covered_neg.add(edge_key)
+                cov_pct = (len(covered_neg) / total_global_neg_edges * 100.0) if total_global_neg_edges > 0 else 0.0
+                
+                cohesive_communities.append({
+                    "nodes": list(combo),
+                    "size": size,
+                    "internal_edges": internal_edges,
+                    "pos_edges": pos_edges,
+                    "neg_edges": neg_edges,
+                    "pos_cohesion_pct": float(pos_cohesion * 100.0),
+                    "covered_neg_edges_count": len(covered_neg),
+                    "neg_coverage_pct": float(cov_pct)
+                })
+                
+    cohesive_communities.sort(key=lambda x: (x["neg_coverage_pct"], x["pos_cohesion_pct"]), reverse=True)
+    
+    return {
+        "candidate_nodes": candidate_nodes,
+        "num_candidate_nodes": len(candidate_nodes),
+        "total_global_neg_edges": total_global_neg_edges,
+        "cohesive_communities": cohesive_communities
+    }
+
+
+def plot_candidate_subsets_analysis(graph: nx.Graph, analysis_results: dict[str, Any], top_n: int = 4) -> None:
+    """Visualize top cohesive communities found via combinatorial subset inspection.
+    
+    Args:
+        graph: Undirected signed Graph.
+        analysis_results: Dict returned by analyze_candidate_subsets.
+        top_n: Number of top cohesive communities to plot.
+    """
+    communities = analysis_results.get("cohesive_communities", [])[:top_n]
+    if not communities:
+        print("No cohesive communities matched the criteria.")
+        return
+        
+    cols = min(2, len(communities))
+    rows = (len(communities) + cols - 1) // cols
+    fig, axes = plt.subplots(rows, cols, figsize=(7 * cols, 6 * rows))
+    if len(communities) == 1:
+        axes = [axes]
+    else:
+        axes = axes.flatten() if hasattr(axes, "flatten") else axes
+        
+    for idx, comm in enumerate(communities):
+        ax = axes[idx]
+        nodes = comm["nodes"]
+        sub = graph.subgraph(nodes)
+        pos = nx.spring_layout(sub, seed=42)
+        
+        edge_colors = ['#2ecc71' if float(d.get("weight", 0)) > 0 else '#e74c3c' for _, _, d in sub.edges(data=True)]
+        nx.draw_networkx_nodes(sub, pos, ax=ax, node_color="#3498db", node_size=500, edgecolors="black")
+        nx.draw_networkx_labels(sub, pos, ax=ax, font_size=9, font_color="white", font_weight="bold")
+        nx.draw_networkx_edges(sub, pos, ax=ax, edge_color=edge_colors, width=2.0)
+        
+        ax.set_title(f"Cohesive Subset #{idx+1} (n={comm['size']})", fontsize=12, fontweight="bold", color="#2c3e50")
+        stats_text = (
+            f"Internal Pos Cohesion: {comm['pos_cohesion_pct']:.1f}%\\n"
+            f"Global Neg Coverage: {comm['neg_coverage_pct']:.2f}% ({comm['covered_neg_edges_count']} edges)\\n"
+            f"Internal Edges: {comm['pos_edges']} pos / {comm['neg_edges']} neg"
+        )
+        ax.text(0.05, 0.05, stats_text, transform=ax.transAxes, fontsize=9,
+                bbox=dict(boxstyle="round,pad=0.5", facecolor="#ecf0f1", edgecolor="#bdc3c7", alpha=0.9))
+        ax.axis("off")
+        
+    for idx in range(len(communities), len(axes)):
+        axes[idx].axis("off")
+        
+    plt.tight_layout()
+    plt.show()
+
+
+def get_all_valid_XY_for_lambda(graph: nx.Graph, lambda_threshold: int) -> list[dict[str, Any]]:
+    """Find all valid (X, Y) threshold pairs such that 3 <= |S| <= lambda_threshold.
+    Groups results by unique candidate node subsets S to keep analysis DRY.
+    
+    Args:
+        graph: Undirected signed Graph.
+        lambda_threshold: Maximum number of nodes in S allowed.
+        
+    Returns:
+        List of dicts, each containing:
+          - "candidate_nodes": list of nodes in S
+          - "node_count": size of S
+          - "thresholds": list of (X, Y) tuples that produce this exact subset S
+          - "representative_X": representative min_neg_degree threshold
+          - "representative_Y": representative min_neg_ratio threshold
+    """
+    X_options = list(range(2, 31))
+    Y_options = [0.05 * i for i in range(2, 20)] # 0.10 to 0.95
+    
+    # Calculate degree and neg ratio for all nodes once for speed
+    node_stats = {}
+    for node in graph.nodes():
+        edges = graph.edges(node, data=True)
+        total_deg = len(edges)
+        neg_deg = sum(1 for _, _, d in edges if float(d.get("weight", 0.0)) < 0)
+        ratio = neg_deg / total_deg if total_deg > 0 else 0.0
+        node_stats[node] = (neg_deg, ratio)
+        
+    subset_to_thresholds = defaultdict(list)
+    
+    for X in X_options:
+        for Y in Y_options:
+            nodes_matching = []
+            for node, (neg_deg, ratio) in node_stats.items():
+                if neg_deg >= X and ratio >= Y:
+                    nodes_matching.append(node)
+            count = len(nodes_matching)
+            if 3 <= count <= lambda_threshold:
+                subset_key = tuple(sorted(nodes_matching))
+                subset_to_thresholds[subset_key].append((X, Y))
+                
+    results = []
+    for subset_key, thresholds in subset_to_thresholds.items():
+        rep_X, rep_Y = thresholds[0]
+        results.append({
+            "candidate_nodes": list(subset_key),
+            "node_count": len(subset_key),
+            "thresholds": thresholds,
+            "representative_X": rep_X,
+            "representative_Y": rep_Y
+        })
+        
+    results.sort(key=lambda x: x["node_count"], reverse=True)
+    return results
+
+
+# ==============================================================================
+# 8. COHESIVE FRAUDSTER GROUP DETECTION
 # ==============================================================================
 
 def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_density: float = 0.7, min_balance_ratio: float = 0.9, NumberOfRandoms: int = 100) -> list[dict[str, Any]]:
@@ -1051,185 +1278,6 @@ def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_de
     return detected_groups
 
 
-def extract_ego_subgraphs(graph: nx.Graph, k: int = 5) -> tuple[nx.Graph, nx.Graph]:
-    """Identify top k nodes with most negative and most -1.0 weight incident edges,
-    and compose their ego-subgraphs (radius=1).
-    Saves the composed subgraphs to negative_graph.gexf and negative1_graph.gexf.
-    Prints top nodes stats and subgraph size info.
-    
-    Args:
-        graph: Input signed graph.
-        k: Number of top nodes to select.
-        
-    Returns:
-        Tuple of (composed_negative_graph, composed_negative1_graph).
-    """
-    negative_edges_count = defaultdict(lambda: [0, 0])
-    for u, v, data in graph.edges(data=True):
-        w = float(data["weight"])
-        if w < 0:
-            negative_edges_count[u][0] += 1
-            negative_edges_count[v][0] += 1
-        if w == -1.0:
-            negative_edges_count[u][1] += 1
-            negative_edges_count[v][1] += 1
-
-    top_neg_nodes = sorted(negative_edges_count.keys(), key=lambda n: negative_edges_count[n][0], reverse=True)[:k]
-    top_neg1_nodes = sorted(negative_edges_count.keys(), key=lambda n: negative_edges_count[n][1], reverse=True)[:k]
-
-    print(f"Top nodes with most negative links: {top_neg_nodes}")
-    print(f"Top nodes with most -1.0 links: {top_neg1_nodes}")
-
-    negative_graph = nx.compose_all([nx.ego_graph(graph, node, radius=1) for node in top_neg_nodes])
-    negative1_graph = nx.compose_all([nx.ego_graph(graph, node, radius=1) for node in top_neg1_nodes])
-
-    nx.write_gexf(negative_graph, "negative_graph.gexf")
-    nx.write_gexf(negative1_graph, "negative1_graph.gexf")
-
-    print(f"\nNegative Subgraph: {negative_graph.number_of_nodes()} nodes, {negative_graph.number_of_edges()} edges")
-    print(f"Negative1 Subgraph: {negative1_graph.number_of_nodes()} nodes, {negative1_graph.number_of_edges()} edges")
-    
-    return negative_graph, negative1_graph
-
-
-def detect_fraudster_groups_by_ratio(
-    graph: nx.Graph, 
-    min_neg_degree: int = 5, 
-    min_neg_ratio: float = 0.7, 
-    min_pos_density: float = 0.5, 
-    min_balance_ratio: float = 0.8, 
-    NumberOfRandoms: int = 100
-) -> list[dict[str, Any]]:
-    """Detect cohesive groups of potential fraudsters in a signed graph
-    by filtering candidate nodes on both minimum negative degree and ratio,
-    and then performing a raw exponential combination search over subsets of S.
-    
-    Args:
-        graph: Undirected signed Graph.
-        min_neg_degree: Minimum negative degree for a node to be a candidate.
-        min_neg_ratio: Minimum ratio of negative degree to total degree.
-        min_pos_density: Minimum positive edge density within the group (Z%).
-        min_balance_ratio: Ignored in this raw search.
-        NumberOfRandoms: Number of random realizations to generate for subgraph null models.
-        
-    Returns:
-        List of dictionaries with group nodes, size, positive/negative densities,
-        coverage metrics, and structural balance stats.
-    """
-    import itertools
-    
-    # 1. Filter candidate nodes S
-    S = []
-    for node in graph.nodes():
-        deg = graph.degree(node)
-        if deg == 0:
-            continue
-        neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
-        if neg_deg >= min_neg_degree and (neg_deg / deg) >= min_neg_ratio:
-            S.append(node)
-            
-    if not S:
-        return []
-        
-    print(f"Subset S filtered: {len(S)} candidate nodes.")
-    print(f"Running raw exponential search for subsets of size 3, 4, 5 with Z={min_pos_density*100}%...")
-    
-    # 2. Raw exponential search for subsets of size 3, 4, and 5
-    all_valid_groups = []
-    
-    for size in [3, 4, 5]:
-        for comm in itertools.combinations(S, size):
-            n = len(comm)
-            possible_edges = n * (n - 1) / 2
-            
-            pos_edges_count = 0
-            neg_edges_count = 0
-            
-            for i in range(n):
-                for j in range(i + 1, n):
-                    u, v = comm[i], comm[j]
-                    if graph.has_edge(u, v):
-                        w = graph[u][v].get('weight', 1.0)
-                        if w > 0:
-                            pos_edges_count += 1
-                        elif w < 0:
-                            neg_edges_count += 1
-                            
-            pos_density = pos_edges_count / possible_edges
-            
-            if pos_density >= min_pos_density:
-                all_valid_groups.append({
-                    'nodes': set(comm),
-                    'size': n,
-                    'pos_density': pos_density,
-                    'neg_density': neg_edges_count / possible_edges
-                })
-                
-    # 3. Filter to keep only maximal groups
-    maximal_groups = []
-    for g in all_valid_groups:
-        is_sub = False
-        for other in all_valid_groups:
-            if g != other and g['nodes'].issubset(other['nodes']) and len(g['nodes']) < len(other['nodes']):
-                is_sub = True
-                break
-        if not is_sub:
-            if not any(g['nodes'] == existing['nodes'] for existing in maximal_groups):
-                maximal_groups.append(g)
-                
-    # 4. Compute coverage metrics and Bw stats for the maximal groups
-    total_neg_edges = sum(1 for u, v in graph.edges() if graph[u][v].get('weight', 1.0) < 0)
-    detected_groups = []
-    
-    for g in maximal_groups:
-        comm = g['nodes']
-        n = g['size']
-        
-        # Coverage stats
-        neg_edges_count = 0
-        nodes_list = list(comm)
-        for i in range(n):
-            for j in range(i + 1, n):
-                u, v = nodes_list[i], nodes_list[j]
-                if graph.has_edge(u, v) and graph[u][v].get('weight', 1.0) < 0:
-                    neg_edges_count += 1
-                    
-        internal_coverage = (neg_edges_count / total_neg_edges) * 100 if total_neg_edges > 0 else 0.0
-        
-        incident_neg_edges = set()
-        for node in comm:
-            for nbr in graph.neighbors(node):
-                if graph[node][nbr].get('weight', 1.0) < 0:
-                    edge = tuple(sorted([node, nbr]))
-                    incident_neg_edges.add(edge)
-        incident_coverage = (len(incident_neg_edges) / total_neg_edges) * 100 if total_neg_edges > 0 else 0.0
-        
-        # Balance metrics
-        group_subgraph = graph.subgraph(comm)
-        group_null_models = [generate_null_model(group_subgraph, (214013 * i + 2531011) % (1 << 31)) for i in range(NumberOfRandoms)]
-        group_bw_stats, _ = calculate_balance_metrics(group_subgraph, group_null_models, NumberOfRandoms)
-        
-        detected_groups.append({
-            'nodes': comm,
-            'size': n,
-            'pos_density': g['pos_density'],
-            'neg_density': g['neg_density'],
-            'total_triangles': 0, # not computed for raw search
-            'balanced_triangles': 0, # not computed for raw search
-            'balance_ratio': 1.0, # disabled
-            'internal_coverage': internal_coverage,
-            'incident_coverage': incident_coverage,
-            'bw': group_bw_stats['bw'],
-            'bw_zscore': group_bw_stats['z-score'],
-            'bw_mean': group_bw_stats['mean'],
-            'bw_std': group_bw_stats['std'],
-            'bw_percentile': group_bw_stats['percentile']
-        })
-        
-    detected_groups.sort(key=lambda x: x['size'], reverse=True)
-    return detected_groups
-
-
 def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Fraudster Group", save_path: str = None, ax: plt.Axes = None, stats: dict = None) -> None:
     """Visualize a detected fraudster group with spring force layout.
     
@@ -1250,17 +1298,15 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
         layout_graph.add_edge(u, v, weight=max(w, 0.1))
         
     n_nodes = len(group_nodes)
-    k_distance = 2.5 / np.sqrt(n_nodes) if n_nodes > 0 else 1.0
-    pos = nx.spring_layout(layout_graph, weight='weight', k=k_distance, iterations=150, seed=42)
+    k_distance = 1.8 / np.sqrt(n_nodes) if n_nodes > 0 else 1.0
+    pos = nx.spring_layout(layout_graph, weight='weight', k=k_distance, iterations=120, seed=42)
     
     node_neg_degs = []
     for node in group_nodes:
         neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
         node_neg_degs.append(neg_deg)
         
-    # Scale community node sizes dynamically and cap them between 300 and 800
-    max_deg = max(node_neg_degs) if node_neg_degs else 1
-    node_sizes = [250 + 550 * (deg / max_deg) for deg in node_neg_degs]
+    node_sizes = [250 + 120 * deg for deg in node_neg_degs]
         
     pos_edges = []
     neg_edges = []
@@ -1270,10 +1316,10 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
         w = subgraph[u][v].get('weight', 1.0)
         if w > 0:
             pos_edges.append((u, v))
-            pos_widths.append(1.5 + 2.0 * abs(w))
+            pos_widths.append(1.0 + 3.0 * abs(w))
         elif w < 0:
             neg_edges.append((u, v))
-            neg_widths.append(1.0)
+            neg_widths.append(1.0 + 3.0 * abs(w))
             
     if ax is None:
         fig, ax = plt.subplots(figsize=(8, 6))
@@ -1284,16 +1330,14 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
         show_plot = False
         
     cmap = plt.cm.YlOrRd
-    
-    # Draw community nodes
     nodes = nx.draw_networkx_nodes(
         subgraph, pos, ax=ax,
         node_color=node_neg_degs,
         node_size=node_sizes,
         cmap=cmap,
         edgecolors='#2c3e50',
-        linewidths=1.2,
-        alpha=0.95
+        linewidths=1.5,
+        alpha=0.9
     )
     
     if pos_edges:
@@ -1302,7 +1346,7 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
             edgelist=pos_edges,
             edge_color='#2ecc71',
             width=pos_widths,
-            alpha=0.85
+            alpha=0.8
         )
     
     if neg_edges:
@@ -1315,13 +1359,7 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
             alpha=0.8
         )
     
-    # Render labels with white background boxes for readability
-    labels = {n: str(n) for n in group_nodes}
-    nx.draw_networkx_labels(
-        subgraph, pos, ax=ax, labels=labels, 
-        font_size=8, font_weight='bold', font_color='#2c3e50',
-        bbox=dict(boxstyle="round,pad=0.15", facecolor="white", alpha=0.8, edgecolor="none")
-    )
+    nx.draw_networkx_labels(subgraph, pos, ax=ax, font_size=8, font_weight='bold', font_color='#2c3e50')
     
     if stats is not None:
         stats_text = (
@@ -1330,12 +1368,8 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
             f"Neg Density: {stats['neg_density']:.2f}\n"
             f"Balance Ratio: {stats['balance_ratio']:.2f}"
         )
-        if 'bw_zscore' in stats:
-            stats_text += f"\nBw Z-score: {stats['bw_zscore']:.2f}"
-        if 'internal_coverage' in stats:
-            stats_text += f"\nInt Cover: {stats['internal_coverage']:.1f}%"
-        if 'incident_coverage' in stats:
-            stats_text += f"\nInc Cover: {stats['incident_coverage']:.1f}%"
+        if 'bw' in stats:
+            stats_text += f"\nBw: {stats['bw']:.4f}\nBw Z-score: {stats['bw_zscore']:.2f}"
         ax.text(
             0.02, 0.02, stats_text,
             transform=ax.transAxes,
@@ -1359,8 +1393,6 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
             plt.close()
         else:
             plt.show()
-            
-            
 
 
 def plot_all_fraudster_groups(graph: nx.Graph, groups: list[dict[str, Any]], title: str = "Detected Fraudster Groups", save_path: str = None) -> None:
