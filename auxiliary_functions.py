@@ -1031,8 +1031,14 @@ def analyze_candidate_subsets(
             pos_cohesion = pos_edges / internal_edges
             
             if pos_cohesion >= min_pos_cohesion:
-                # CRITICAL REQUIREMENT 2: Global neg coverage considering ONLY negative edges inside the induced subgraph
-                cov_pct = (neg_edges / total_global_neg_edges * 100.0) if total_global_neg_edges > 0 else 0.0
+                # Union of all global negative edges incident to any node in combo (preventing double counting)
+                covered_neg = set()
+                for u in combo:
+                    for _, v, d in graph.edges(u, data=True):
+                        if float(d.get("weight", 0.0)) < 0:
+                            edge_key = tuple(sorted((u, v)))
+                            covered_neg.add(edge_key)
+                cov_pct = (len(covered_neg) / total_global_neg_edges * 100.0) if total_global_neg_edges > 0 else 0.0
                 pos_density = pos_edges / max_possible_edges if max_possible_edges > 0 else 0.0
                 neg_density = neg_edges / max_possible_edges if max_possible_edges > 0 else 0.0
                 
@@ -1044,7 +1050,7 @@ def analyze_candidate_subsets(
                     "neg_edges": neg_edges,
                     "pos_cohesion_pct": float(pos_cohesion * 100.0),
                     "neg_coverage_pct": float(cov_pct),
-                    "covered_neg_edges_count": neg_edges,
+                    "covered_neg_edges_count": len(covered_neg),
                     "pos_density": float(pos_density),
                     "neg_density": float(neg_density),
                     "balance_ratio": float(pos_cohesion)
@@ -1098,7 +1104,7 @@ def plot_candidate_subsets_analysis(graph: nx.Graph, analysis_results: dict[str,
         extra_text = (
             f"Internal Edges: {comm['pos_edges']} pos / {comm['neg_edges']} neg\n"
             f"Pos Cohesion: {comm['pos_cohesion_pct']:.1f}%\n"
-            f"Global Neg Coverage: {comm['neg_coverage_pct']:.2f}%"
+            f"Global Neg Coverage: {comm['neg_coverage_pct']:.2f}% ({comm['covered_neg_edges_count']} edges)"
         )
         ax.text(
             0.98, 0.02, extra_text,
