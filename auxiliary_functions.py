@@ -984,22 +984,14 @@ def analyze_candidate_subsets(
     min_neg_ratio: float = 0.15,
     min_subset_size: int = 3,
     max_subset_size: int = 6,
-    min_pos_cohesion: float = 0.6,
+    min_pos_cohesion: float = 0.0,
     candidate_nodes: list[str] = None
 ) -> dict[str, Any]:
     """Examine candidate node subsets S by negative edge incidence criteria and check combinatorial subgraphs for cohesion and negative coverage.
     
-    Args:
-        graph: Undirected signed Graph.
-        min_neg_degree: Minimum incident negative edges X required for a node in S (if candidate_nodes is not provided).
-        min_neg_ratio: Minimum fraction Y of incident negative edges out of total incident edges (if candidate_nodes is not provided).
-        min_subset_size: Minimum subset size to evaluate inside S.
-        max_subset_size: Maximum subset size to evaluate inside S.
-        min_pos_cohesion: Minimum fraction of positive edges within subset to be considered cohesive.
-        candidate_nodes: Optional list of pre-filtered candidate nodes. If provided, min_neg_degree and min_neg_ratio are ignored.
-        
-    Returns:
-        Dict containing subset S details, global negative coverage stats, and cohesive communities found.
+    CRITICAL REQUIREMENTS ENFORCED:
+    1. Only connected subgraphs G[C] are evaluated (nx.is_connected(sub)).
+    2. Global negative coverage considers ONLY negative edges inside the induced subgraph G[C].
     """
     total_global_neg_edges = sum(1 for _, _, data in graph.edges(data=True) if float(data.get("weight", 0.0)) < 0)
     
@@ -1022,23 +1014,27 @@ def analyze_candidate_subsets(
     max_size = min(len(search_nodes), max_subset_size)
     
     for size in range(min_subset_size, max_size + 1):
+        max_possible_edges = size * (size - 1) / 2.0
         for combo in itertools.combinations(search_nodes, size):
             sub = graph.subgraph(combo)
+            # CRITICAL REQUIREMENT 3: consider ONLY connected subgraphs
+            if not nx.is_connected(sub):
+                continue
+                
             internal_edges = sub.number_of_edges()
             if internal_edges == 0:
                 continue
+                
             pos_edges = sum(1 for _, _, d in sub.edges(data=True) if float(d.get("weight", 0.0)) > 0)
-            neg_edges = internal_edges - pos_edges
+            neg_edges = sum(1 for _, _, d in sub.edges(data=True) if float(d.get("weight", 0.0)) < 0)
+            
             pos_cohesion = pos_edges / internal_edges
             
             if pos_cohesion >= min_pos_cohesion:
-                covered_neg = set()
-                for u in combo:
-                    for _, v, d in graph.edges(u, data=True):
-                        if float(d.get("weight", 0.0)) < 0:
-                            edge_key = tuple(sorted((u, v)))
-                            covered_neg.add(edge_key)
-                cov_pct = (len(covered_neg) / total_global_neg_edges * 100.0) if total_global_neg_edges > 0 else 0.0
+                # CRITICAL REQUIREMENT 2: Global neg coverage considering ONLY negative edges inside the induced subgraph
+                cov_pct = (neg_edges / total_global_neg_edges * 100.0) if total_global_neg_edges > 0 else 0.0
+                pos_density = pos_edges / max_possible_edges if max_possible_edges > 0 else 0.0
+                neg_density = neg_edges / max_possible_edges if max_possible_edges > 0 else 0.0
                 
                 cohesive_communities.append({
                     "nodes": list(combo),
@@ -1047,8 +1043,11 @@ def analyze_candidate_subsets(
                     "pos_edges": pos_edges,
                     "neg_edges": neg_edges,
                     "pos_cohesion_pct": float(pos_cohesion * 100.0),
-                    "covered_neg_edges_count": len(covered_neg),
-                    "neg_coverage_pct": float(cov_pct)
+                    "neg_coverage_pct": float(cov_pct),
+                    "covered_neg_edges_count": neg_edges,
+                    "pos_density": float(pos_density),
+                    "neg_density": float(neg_density),
+                    "balance_ratio": float(pos_cohesion)
                 })
                 
     cohesive_communities.sort(key=lambda x: (x["neg_coverage_pct"], x["pos_cohesion_pct"]), reverse=True)
@@ -1061,51 +1060,64 @@ def analyze_candidate_subsets(
     }
 
 
-def plot_candidate_subsets_analysis(graph: nx.Graph, analysis_results: dict[str, Any], top_n: int = 4) -> None:
-    """Visualize top cohesive communities found via combinatorial subset inspection.
+def plot_candidate_subsets_analysis(graph: nx.Graph, analysis_results: dict[str, Any], top_n: int = 4, title: str = "Connected Cohesive Subsets") -> None:
+    """Visualize top connected cohesive communities found via combinatorial subset inspection, using Section 8 visualizer style.
     
     Args:
         graph: Undirected signed Graph.
         analysis_results: Dict returned by analyze_candidate_subsets.
         top_n: Number of top cohesive communities to plot.
+        title: Overall plot figure title.
     """
     communities = analysis_results.get("cohesive_communities", [])[:top_n]
     if not communities:
-        print("No cohesive communities matched the criteria.")
+        print("No connected cohesive communities matched the criteria.")
         return
         
-    cols = min(2, len(communities))
-    rows = (len(communities) + cols - 1) // cols
-    fig, axes = plt.subplots(rows, cols, figsize=(7 * cols, 6 * rows))
-    if len(communities) == 1:
-        axes = [axes]
-    else:
-        axes = axes.flatten() if hasattr(axes, "flatten") else axes
-        
-    for idx, comm in enumerate(communities):
-        ax = axes[idx]
-        nodes = comm["nodes"]
-        sub = graph.subgraph(nodes)
-        pos = nx.spring_layout(sub, seed=42)
-        
-        edge_colors = ['#2ecc71' if float(d.get("weight", 0)) > 0 else '#e74c3c' for _, _, d in sub.edges(data=True)]
-        nx.draw_networkx_nodes(sub, pos, ax=ax, node_color="#3498db", node_size=500, edgecolors="black")
-        nx.draw_networkx_labels(sub, pos, ax=ax, font_size=9, font_color="white", font_weight="bold")
-        nx.draw_networkx_edges(sub, pos, ax=ax, edge_color=edge_colors, width=2.0)
-        
-        ax.set_title(f"Cohesive Subset #{idx+1} (n={comm['size']})", fontsize=12, fontweight="bold", color="#2c3e50")
-        stats_text = (
-            f"Internal Pos Cohesion: {comm['pos_cohesion_pct']:.1f}%\\n"
-            f"Global Neg Coverage: {comm['neg_coverage_pct']:.2f}% ({comm['covered_neg_edges_count']} edges)\\n"
-            f"Internal Edges: {comm['pos_edges']} pos / {comm['neg_edges']} neg"
+    n_groups = len(communities)
+    n_cols = min(2, n_groups)
+    n_rows = (n_groups + n_cols - 1) // n_cols
+    
+    fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 6 * n_rows))
+    axes = np.atleast_1d(axes).flatten()
+    
+    for idx, (comm, ax) in enumerate(zip(communities, axes)):
+        custom_stats = {
+            "size": comm["size"],
+            "pos_density": comm["pos_density"],
+            "neg_density": comm["neg_density"],
+            "balance_ratio": comm.get("balance_ratio", comm["pos_cohesion_pct"] / 100.0)
+        }
+        plot_fraudster_group(
+            graph,
+            comm["nodes"],
+            title=f"Connected Cohesive Subset #{idx+1} (n={comm['size']})",
+            ax=ax,
+            stats=custom_stats
         )
-        ax.text(0.05, 0.05, stats_text, transform=ax.transAxes, fontsize=9,
-                bbox=dict(boxstyle="round,pad=0.5", facecolor="#ecf0f1", edgecolor="#bdc3c7", alpha=0.9))
-        ax.axis("off")
+        extra_text = (
+            f"Internal Edges: {comm['pos_edges']} pos / {comm['neg_edges']} neg\n"
+            f"Pos Cohesion: {comm['pos_cohesion_pct']:.1f}%\n"
+            f"Global Neg Coverage: {comm['neg_coverage_pct']:.2f}%"
+        )
+        ax.text(
+            0.98, 0.02, extra_text,
+            transform=ax.transAxes,
+            fontsize=8.5,
+            horizontalalignment='right',
+            verticalalignment='bottom',
+            bbox=dict(boxstyle="round,pad=0.3", facecolor="#f8f9fa", alpha=0.95, edgecolor="#cbd5e1")
+        )
         
-    for idx in range(len(communities), len(axes)):
-        axes[idx].axis("off")
+    for ax in axes[n_groups:]:
+        ax.axis('off')
         
+    legend_elements = [
+        Line2D([0], [0], color='#2ecc71', lw=3, label='Positive (Friendship Link)'),
+        Line2D([0], [0], color='#e74c3c', lw=3, linestyle='--', label='Negative (Conflict Link)')
+    ]
+    fig.legend(handles=legend_elements, loc='lower center', ncol=2, fontsize=11, frameon=True, edgecolor='lightgray')
+    plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.show()
 
