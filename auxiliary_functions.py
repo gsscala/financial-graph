@@ -16,6 +16,7 @@ import random
 import itertools
 from collections import defaultdict
 from typing import Any
+from tqdm.auto import tqdm
 
 import numpy as np
 import pandas as pd
@@ -985,13 +986,15 @@ def analyze_candidate_subsets(
     min_subset_size: int = 3,
     max_subset_size: int = 6,
     min_pos_cohesion: float = 0.0,
-    candidate_nodes: list[str] = None
+    candidate_nodes: list[str] = None,
+    export_jsonl_path: str = None
 ) -> dict[str, Any]:
     """Examine candidate node subsets S by negative edge incidence criteria and check combinatorial subgraphs for cohesion and negative coverage.
     
     CRITICAL REQUIREMENTS ENFORCED:
     1. Only connected subgraphs G[C] are evaluated (nx.is_connected(sub)).
     2. Global negative coverage considers ONLY negative edges inside the induced subgraph G[C].
+    3. Streams each connected subgraph record to JSONL if export_jsonl_path is provided.
     """
     total_global_neg_edges = sum(1 for _, _, data in graph.edges(data=True) if float(data.get("weight", 0.0)) < 0)
     
@@ -1013,48 +1016,56 @@ def analyze_candidate_subsets(
     search_nodes = sorted(candidate_nodes)
     max_size = min(len(search_nodes), max_subset_size)
     
-    for size in range(min_subset_size, max_size + 1):
-        max_possible_edges = size * (size - 1) / 2.0
-        for combo in itertools.combinations(search_nodes, size):
-            sub = graph.subgraph(combo)
-            # CRITICAL REQUIREMENT 3: consider ONLY connected subgraphs
-            if not nx.is_connected(sub):
-                continue
+    f_jsonl = open(export_jsonl_path, "w", encoding="utf-8") if export_jsonl_path else None
+    try:
+        for size in range(min_subset_size, max_size + 1):
+            max_possible_edges = size * (size - 1) / 2.0
+            for combo in tqdm(itertools.combinations(search_nodes, size)):
+                sub = graph.subgraph(combo)
+                # CRITICAL REQUIREMENT 3: consider ONLY connected subgraphs
+                if not nx.is_connected(sub):
+                    continue
+                    
+                internal_edges = sub.number_of_edges()
+                if internal_edges == 0:
+                    continue
+                    
+                pos_edges = sum(1 for _, _, d in sub.edges(data=True) if float(d.get("weight", 0.0)) > 0)
+                neg_edges = sum(1 for _, _, d in sub.edges(data=True) if float(d.get("weight", 0.0)) < 0)
                 
-            internal_edges = sub.number_of_edges()
-            if internal_edges == 0:
-                continue
+                pos_cohesion = pos_edges / internal_edges
                 
-            pos_edges = sum(1 for _, _, d in sub.edges(data=True) if float(d.get("weight", 0.0)) > 0)
-            neg_edges = sum(1 for _, _, d in sub.edges(data=True) if float(d.get("weight", 0.0)) < 0)
-            
-            pos_cohesion = pos_edges / internal_edges
-            
-            if pos_cohesion >= min_pos_cohesion:
-                # Union of all global negative edges incident to any node in combo (preventing double counting)
-                covered_neg = set()
-                for u in combo:
-                    for _, v, d in graph.edges(u, data=True):
-                        if float(d.get("weight", 0.0)) < 0:
-                            edge_key = tuple(sorted((u, v)))
-                            covered_neg.add(edge_key)
-                cov_pct = (len(covered_neg) / total_global_neg_edges * 100.0) if total_global_neg_edges > 0 else 0.0
-                pos_density = pos_edges / max_possible_edges if max_possible_edges > 0 else 0.0
-                neg_density = neg_edges / max_possible_edges if max_possible_edges > 0 else 0.0
-                
-                cohesive_communities.append({
-                    "nodes": list(combo),
-                    "size": size,
-                    "internal_edges": internal_edges,
-                    "pos_edges": pos_edges,
-                    "neg_edges": neg_edges,
-                    "pos_cohesion_pct": float(pos_cohesion * 100.0),
-                    "neg_coverage_pct": float(cov_pct),
-                    "covered_neg_edges_count": len(covered_neg),
-                    "pos_density": float(pos_density),
-                    "neg_density": float(neg_density),
-                    "balance_ratio": float(pos_cohesion)
-                })
+                if pos_cohesion >= min_pos_cohesion:
+                    # Union of all global negative edges incident to any node in combo (preventing double counting)
+                    covered_neg = set()
+                    for u in combo:
+                        for _, v, d in graph.edges(u, data=True):
+                            if float(d.get("weight", 0.0)) < 0:
+                                edge_key = tuple(sorted((u, v)))
+                                covered_neg.add(edge_key)
+                    cov_pct = (len(covered_neg) / total_global_neg_edges * 100.0) if total_global_neg_edges > 0 else 0.0
+                    pos_density = pos_edges / max_possible_edges if max_possible_edges > 0 else 0.0
+                    neg_density = neg_edges / max_possible_edges if max_possible_edges > 0 else 0.0
+                    
+                    record = {
+                        "nodes": list(combo),
+                        "size": size,
+                        "internal_edges": internal_edges,
+                        "pos_edges": pos_edges,
+                        "neg_edges": neg_edges,
+                        "pos_cohesion_pct": float(pos_cohesion * 100.0),
+                        "neg_coverage_pct": float(cov_pct),
+                        "covered_neg_edges_count": len(covered_neg),
+                        "pos_density": float(pos_density),
+                        "neg_density": float(neg_density),
+                        "balance_ratio": float(pos_cohesion)
+                    }
+                    cohesive_communities.append(record)
+                    if f_jsonl is not None:
+                        f_jsonl.write(json.dumps(record, ensure_ascii=False) + "\n")
+    finally:
+        if f_jsonl is not None:
+            f_jsonl.close()
                 
     cohesive_communities.sort(key=lambda x: (x["neg_coverage_pct"], x["pos_cohesion_pct"]), reverse=True)
     
@@ -1121,6 +1132,110 @@ def plot_candidate_subsets_analysis(graph: nx.Graph, analysis_results: dict[str,
     plt.suptitle(title, fontsize=14, fontweight='bold', y=1.02)
     plt.tight_layout()
     plt.show()
+
+
+def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title: str = "Combinatorial Connected Subgraphs Statistical Suite") -> None:
+    """Plot a comprehensive statistical distribution suite for combinatorial connected subgraphs.
+    
+    Includes:
+    1. Positive Density distribution across Global Negative Coverage levels.
+    2. 2D Joint Histogram (Hexbin / Scatter Density) with marginal histograms.
+    3. Pareto-Optimal Frontier (Threat Coverage vs. Positive Cohesion).
+    4. Subgraph Size (k) scaling and Internal Phase Space analysis.
+    """
+    communities = analysis_results.get("cohesive_communities", [])
+    if not communities:
+        print("No connected cohesive communities available to plot.")
+        return
+        
+    cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=float)
+    pos_densities = np.array([c["pos_density"] for c in communities], dtype=float)
+    neg_densities = np.array([c["neg_density"] for c in communities], dtype=float)
+    pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=float)
+    sizes = np.array([c["size"] for c in communities], dtype=int)
+    
+    # Figure 1: Positive Density across Global Negative Coverage Bins & Joint Histogram
+    fig1 = plt.figure(figsize=(15, 6))
+    
+    ax1 = fig1.add_subplot(1, 2, 1)
+    unique_covs = np.unique(cov_pcts)
+    if len(unique_covs) <= 15:
+        data_by_cov = [pos_densities[cov_pcts == val] for val in unique_covs]
+        labels_cov = [f"{val:.1f}%" for val in unique_covs]
+        ax1.boxplot(data_by_cov, positions=range(len(unique_covs)), widths=0.5, patch_artist=True,
+                    boxprops=dict(facecolor="#3498db", alpha=0.7), medianprops=dict(color="#e74c3c", lw=2))
+        ax1.set_xticks(range(len(unique_covs)))
+        ax1.set_xticklabels(labels_cov, rotation=45)
+    else:
+        ax1.scatter(cov_pcts, pos_densities, alpha=0.3, color="#3498db", edgecolors="none")
+    ax1.set_title("Positive Density Distribution by Global Neg Coverage", fontsize=12, fontweight="bold")
+    ax1.set_xlabel("Global Negative Edge Coverage (%)", fontsize=10)
+    ax1.set_ylabel("Positive Density", fontsize=10)
+    ax1.grid(True, linestyle="--", alpha=0.4)
+    
+    ax2 = fig1.add_subplot(1, 2, 2)
+    hb = ax2.hexbin(cov_pcts, pos_densities, gridsize=20, cmap="YlOrRd", mincnt=1)
+    fig1.colorbar(hb, ax=ax2, label="Subgraph Count")
+    ax2.set_title("2D Joint Density: Coverage vs. Positive Density", fontsize=12, fontweight="bold")
+    ax2.set_xlabel("Global Negative Edge Coverage (%)", fontsize=10)
+    ax2.set_ylabel("Positive Density", fontsize=10)
+    ax2.grid(True, linestyle="--", alpha=0.4)
+    
+    plt.suptitle(f"{title} - Part 1: Coverage & Density Distributions", fontsize=14, fontweight="bold", y=1.02)
+    plt.tight_layout()
+    plt.show()
+    
+    # Figure 2: Pareto Frontier & Subgraph Size Scaling
+    fig2, (ax3, ax4) = plt.subplots(1, 2, figsize=(15, 6))
+    
+    ax3.scatter(cov_pcts, pos_cohesions, c=sizes, cmap="viridis", alpha=0.6, edgecolors="black", linewidth=0.5)
+    
+    pareto_indices = []
+    for i in range(len(communities)):
+        is_dominated = False
+        for j in range(len(communities)):
+            if i != j:
+                if (cov_pcts[j] >= cov_pcts[i] and pos_cohesions[j] >= pos_cohesions[i]) and \
+                   (cov_pcts[j] > cov_pcts[i] or pos_cohesions[j] > pos_cohesions[i]):
+                    is_dominated = True
+                    break
+        if not is_dominated:
+            pareto_indices.append(i)
+            
+    if pareto_indices:
+        pareto_covs = cov_pcts[pareto_indices]
+        pareto_cohs = pos_cohesions[pareto_indices]
+        sort_order = np.argsort(pareto_covs)
+        ax3.plot(pareto_covs[sort_order], pareto_cohs[sort_order], color="#e74c3c", lw=2, linestyle="--", label="Pareto Frontier")
+        ax3.scatter(pareto_covs, pareto_cohs, color="#e74c3c", marker="*", s=150, zorder=5, label="Pareto Optimal")
+        ax3.legend(loc="best")
+        
+    ax3.set_title("Pareto Frontier: Threat Coverage vs. Internal Pos Cohesion", fontsize=12, fontweight="bold")
+    ax3.set_xlabel("Global Negative Edge Coverage (%)", fontsize=10)
+    ax3.set_ylabel("Internal Positive Cohesion (%)", fontsize=10)
+    ax3.grid(True, linestyle="--", alpha=0.4)
+    
+    unique_sizes = np.unique(sizes)
+    mean_cov_by_size = [np.mean(cov_pcts[sizes == s]) for s in unique_sizes]
+    mean_pos_by_size = [np.mean(pos_densities[sizes == s]) for s in unique_sizes]
+    
+    ax4_twin = ax4.twinx()
+    l1 = ax4.plot(unique_sizes, mean_cov_by_size, color="#e74c3c", marker="o", lw=2.5, label="Mean Neg Coverage (%)")
+    l2 = ax4_twin.plot(unique_sizes, mean_pos_by_size, color="#2ecc71", marker="s", lw=2.5, label="Mean Pos Density")
+    ax4.set_title("Scaling Across Subgraph Sizes (k)", fontsize=12, fontweight="bold")
+    ax4.set_xlabel("Subgraph Size (k)", fontsize=10)
+    ax4.set_ylabel("Mean Global Negative Coverage (%)", color="#e74c3c", fontsize=10)
+    ax4_twin.set_ylabel("Mean Positive Density", color="#2ecc71", fontsize=10)
+    ax4.grid(True, linestyle="--", alpha=0.4)
+    
+    lines = l1 + l2
+    labels = [line.get_label() for line in lines]
+    ax4.legend(lines, labels, loc="upper left")
+    
+    plt.suptitle(f"{title} - Part 2: Pareto Optimality & Size Scaling", fontsize=14, fontweight="bold", y=1.02)
+    plt.tight_layout()
+    plt.show()
+
 
 
 def get_all_valid_XY_for_lambda(graph: nx.Graph, lambda_threshold: int) -> list[dict[str, Any]]:
