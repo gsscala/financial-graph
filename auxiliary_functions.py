@@ -12,6 +12,7 @@ This module provides production-grade utilities for analyzing social network gra
 
 import os
 import json
+import math
 import random
 import itertools
 from collections import defaultdict
@@ -1077,28 +1078,75 @@ def analyze_candidate_subsets(
     }
 
 
-def plot_candidate_subsets_analysis(graph: nx.Graph, analysis_results: dict[str, Any], top_n: int = 4, title: str = "Connected Cohesive Subsets") -> None:
-    """Visualize top connected cohesive communities found via combinatorial subset inspection, using Section 8 visualizer style.
+def plot_candidate_subsets_analysis(
+    graph: nx.Graph,
+    analysis_results: dict[str, Any],
+    top_n: int = 4,
+    pct_primary_cutoff: float = 0.01,
+    pct_size_cutoff: float = 0.10,
+    title: str = "Connected Cohesive Subsets"
+) -> None:
+    """Visualize top connected cohesive communities found via multi-stage selection & trimming pipeline.
     
-    Args:
-        graph: Undirected signed Graph.
-        analysis_results: Dict returned by analyze_candidate_subsets.
-        top_n: Number of top cohesive communities to plot.
-        title: Overall plot figure title.
+    Half the plots are selected via:
+      1) Sort by Global Negative Coverage (desc), then Pos Cohesion
+      2) Trim top pct_primary_cutoff (e.g. 1%)
+      3) Trim top pct_size_cutoff (e.g. 10%) by subgraph size
+      4) Select max by the OPPOSITE metric (Pos Cohesion desc)
+      
+    The other half are selected via:
+      1) Sort by Pos Cohesion (desc), then Global Negative Coverage
+      2) Trim top pct_primary_cutoff (e.g. 1%)
+      3) Trim top pct_size_cutoff (e.g. 10%) by subgraph size
+      4) Select max by the OPPOSITE metric (Global Negative Coverage desc)
     """
-    communities = analysis_results.get("cohesive_communities", [])[:top_n]
+    communities = analysis_results.get("cohesive_communities", [])
     if not communities:
         print("No connected cohesive communities matched the criteria.")
         return
         
-    n_groups = len(communities)
+    n_cov = (top_n + 1) // 2
+    n_coh = top_n - n_cov
+    
+    # --- Pipeline A: Neg Coverage First -> Trim Primary -> Trim Size -> Max Pos Cohesion ---
+    comm_cov_sorted = sorted(communities, key=lambda x: (x["neg_coverage_pct"], x["pos_cohesion_pct"]), reverse=True)
+    k1_cov = max(n_cov, int(math.ceil(len(comm_cov_sorted) * pct_primary_cutoff)))
+    pool_A1 = comm_cov_sorted[:k1_cov]
+    
+    pool_A1_size_sorted = sorted(pool_A1, key=lambda x: x["size"], reverse=True)
+    k2_cov = max(n_cov, int(math.ceil(len(pool_A1_size_sorted) * pct_size_cutoff)))
+    pool_A2 = pool_A1_size_sorted[:k2_cov]
+    
+    selected_A = sorted(pool_A2, key=lambda x: (x["pos_cohesion_pct"], x["neg_coverage_pct"]), reverse=True)[:n_cov]
+    
+    # --- Pipeline B: Pos Cohesion First -> Trim Primary -> Trim Size -> Max Neg Coverage ---
+    comm_coh_sorted = sorted(communities, key=lambda x: (x["pos_cohesion_pct"], x["neg_coverage_pct"]), reverse=True)
+    k1_coh = max(n_coh, int(math.ceil(len(comm_coh_sorted) * pct_primary_cutoff)))
+    pool_B1 = comm_coh_sorted[:k1_coh]
+    
+    pool_B1_size_sorted = sorted(pool_B1, key=lambda x: x["size"], reverse=True)
+    k2_coh = max(n_coh, int(math.ceil(len(pool_B1_size_sorted) * pct_size_cutoff)))
+    pool_B2 = pool_B1_size_sorted[:k2_coh]
+    
+    selected_B = sorted(pool_B2, key=lambda x: (x["neg_coverage_pct"], x["pos_cohesion_pct"]), reverse=True)[:n_coh]
+    
+    selected_communities = []
+    labels = []
+    for idx, comm in enumerate(selected_A, 1):
+        selected_communities.append(comm)
+        labels.append(f"Top NegCov-First Filter #{idx}")
+    for idx, comm in enumerate(selected_B, 1):
+        selected_communities.append(comm)
+        labels.append(f"Top PosCohesion-First Filter #{idx}")
+        
+    n_groups = len(selected_communities)
     n_cols = min(2, n_groups)
     n_rows = (n_groups + n_cols - 1) // n_cols
     
     fig, axes = plt.subplots(n_rows, n_cols, figsize=(7 * n_cols, 6 * n_rows))
     axes = np.atleast_1d(axes).flatten()
     
-    for idx, (comm, ax) in enumerate(zip(communities, axes)):
+    for idx, (comm, label_prefix, ax) in enumerate(zip(selected_communities, labels, axes)):
         custom_stats = {
             "size": comm["size"],
             "pos_density": comm["pos_density"],
@@ -1108,7 +1156,7 @@ def plot_candidate_subsets_analysis(graph: nx.Graph, analysis_results: dict[str,
         plot_fraudster_group(
             graph,
             comm["nodes"],
-            title=f"Connected Cohesive Subset #{idx+1} (n={comm['size']})",
+            title=f"{label_prefix} (n={comm['size']})",
             ax=ax,
             stats=custom_stats
         )
