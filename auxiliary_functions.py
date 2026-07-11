@@ -1018,9 +1018,9 @@ def analyze_candidate_subsets(
     
     f_jsonl = open(export_jsonl_path, "w", encoding="utf-8") if export_jsonl_path else None
     try:
-        for size in range(min_subset_size, max_size + 1):
+        for size in tqdm(range(min_subset_size, max_size + 1)):
             max_possible_edges = size * (size - 1) / 2.0
-            for combo in tqdm(itertools.combinations(search_nodes, size)):
+            for combo in itertools.combinations(search_nodes, size):
                 sub = graph.subgraph(combo)
                 # CRITICAL REQUIREMENT 3: consider ONLY connected subgraphs
                 if not nx.is_connected(sub):
@@ -1160,21 +1160,25 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     ax1 = fig1.add_subplot(1, 2, 1)
     unique_covs = np.unique(cov_pcts)
     if len(unique_covs) <= 15:
-        data_by_cov = [pos_densities[cov_pcts == val] for val in unique_covs]
+        data_by_cov = [pos_cohesions[cov_pcts == val] for val in unique_covs]
         labels_cov = [f"{val:.1f}%" for val in unique_covs]
         ax1.boxplot(data_by_cov, positions=range(len(unique_covs)), widths=0.5, patch_artist=True,
                     boxprops=dict(facecolor="#3498db", alpha=0.7), medianprops=dict(color="#e74c3c", lw=2))
         ax1.set_xticks(range(len(unique_covs)))
         ax1.set_xticklabels(labels_cov, rotation=45)
     else:
-        ax1.scatter(cov_pcts, pos_densities, alpha=0.3, color="#3498db", edgecolors="none")
+        if len(cov_pcts) > 25000:
+            bg_idx1 = np.random.choice(len(cov_pcts), size=25000, replace=False)
+            ax1.scatter(cov_pcts[bg_idx1], pos_cohesions[bg_idx1], alpha=0.3, s=15, color="#3498db", edgecolors="none")
+        else:
+            ax1.scatter(cov_pcts, pos_cohesions, alpha=0.3, color="#3498db", edgecolors="none")
     ax1.set_title("Positive Density Distribution by Global Neg Coverage", fontsize=12, fontweight="bold")
     ax1.set_xlabel("Global Negative Edge Coverage (%)", fontsize=10)
     ax1.set_ylabel("Positive Density", fontsize=10)
     ax1.grid(True, linestyle="--", alpha=0.4)
     
     ax2 = fig1.add_subplot(1, 2, 2)
-    hb = ax2.hexbin(cov_pcts, pos_densities, gridsize=20, cmap="YlOrRd", mincnt=1)
+    hb = ax2.hexbin(cov_pcts, pos_cohesions, gridsize=20, cmap="YlOrRd", mincnt=1)
     fig1.colorbar(hb, ax=ax2, label="Subgraph Count")
     ax2.set_title("2D Joint Density: Coverage vs. Positive Density", fontsize=12, fontweight="bold")
     ax2.set_xlabel("Global Negative Edge Coverage (%)", fontsize=10)
@@ -1188,19 +1192,21 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     # Figure 2: Pareto Frontier & Subgraph Size Scaling
     fig2, (ax3, ax4) = plt.subplots(1, 2, figsize=(15, 6))
     
-    ax3.scatter(cov_pcts, pos_cohesions, c=sizes, cmap="viridis", alpha=0.6, edgecolors="black", linewidth=0.5)
+    n_points = len(cov_pcts)
+    if n_points > 25000:
+        bg_idx = np.random.choice(n_points, size=25000, replace=False)
+        ax3.scatter(cov_pcts[bg_idx], pos_cohesions[bg_idx], c=sizes[bg_idx], cmap="viridis", alpha=0.3, s=15, edgecolors="none")
+    else:
+        ax3.scatter(cov_pcts, pos_cohesions, c=sizes, cmap="viridis", alpha=0.6, edgecolors="black", linewidth=0.5)
     
+    # O(N log N) Pareto frontier calculation across 100% of points
+    order = np.lexsort((-pos_cohesions, -cov_pcts))
     pareto_indices = []
-    for i in range(len(communities)):
-        is_dominated = False
-        for j in range(len(communities)):
-            if i != j:
-                if (cov_pcts[j] >= cov_pcts[i] and pos_cohesions[j] >= pos_cohesions[i]) and \
-                   (cov_pcts[j] > cov_pcts[i] or pos_cohesions[j] > pos_cohesions[i]):
-                    is_dominated = True
-                    break
-        if not is_dominated:
-            pareto_indices.append(i)
+    max_y = -np.inf
+    for idx in order:
+        if pos_cohesions[idx] > max_y:
+            pareto_indices.append(idx)
+            max_y = pos_cohesions[idx]
             
     if pareto_indices:
         pareto_covs = cov_pcts[pareto_indices]
