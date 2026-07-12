@@ -1017,7 +1017,7 @@ def analyze_candidate_subsets(
     search_nodes = sorted(candidate_nodes)
     max_size = min(len(search_nodes), max_subset_size)
     
-    f_jsonl = open(export_jsonl_path, "w", encoding="utf-8") if export_jsonl_path else None
+    f_jsonl = open(export_jsonl_path, "a", encoding="utf-8") if export_jsonl_path else None
     try:
         for size in tqdm(range(min_subset_size, max_size + 1)):
             max_possible_edges = size * (size - 1) / 2.0
@@ -1271,7 +1271,7 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     
     unique_sizes = np.unique(sizes)
     mean_cov_by_size = [np.mean(cov_pcts[sizes == s]) for s in unique_sizes]
-    mean_pos_by_size = [np.mean(pos_densities[sizes == s]) for s in unique_sizes]
+    mean_pos_by_size = [np.mean(pos_cohesions[sizes == s]) for s in unique_sizes]
     
     ax4_twin = ax4.twinx()
     l1 = ax4.plot(unique_sizes, mean_cov_by_size, color="#e74c3c", marker="o", lw=2.5, label="Mean Neg Coverage (%)")
