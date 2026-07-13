@@ -1184,22 +1184,14 @@ def plot_candidate_subsets_analysis(
     plt.show()
 
 
-def load_subgraph_arrays_from_jsonls(jsonl_paths_or_dir: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Stream primitive arrays directly from one or more JSONL files or directories into compact memory (18 bytes/subgraph)."""
-    if isinstance(jsonl_paths_or_dir, str):
-        if os.path.isdir(jsonl_paths_or_dir):
-            files = sorted(glob.glob(os.path.join(jsonl_paths_or_dir, "*.jsonl")))
-        else:
-            files = [jsonl_paths_or_dir]
+def load_subgraph_arrays_from_jsonl(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Stream primitive arrays directly from a single JSONL file or an entire directory of JSONL files (18 bytes/subgraph)."""
+    if os.path.isdir(path):
+        files = sorted(glob.glob(os.path.join(path, "*.jsonl")))
     else:
-        files = list(jsonl_paths_or_dir)
+        files = [path]
         
-    cov_list = []
-    coh_list = []
-    size_list = []
-    pos_e_list = []
-    neg_e_list = []
-    
+    cov_list, coh_list, size_list, pos_e_list, neg_e_list = [], [], [], [], []
     total_rows = 0
     for filepath in tqdm(files, desc="Streaming JSONL subgraphs into arrays"):
         try:
@@ -1228,37 +1220,32 @@ def load_subgraph_arrays_from_jsonls(jsonl_paths_or_dir: Any) -> tuple[np.ndarra
     return cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr
 
 
-def plot_combinatorial_statistical_suite(data_source: Any, title: str = "Combinatorial Connected Subgraphs Statistical Suite") -> None:
-    """Plot a comprehensive statistical distribution suite from either an analysis_results dict, a JSONL path/dir, or pre-extracted arrays."""
-    if isinstance(data_source, str) or (isinstance(data_source, (list, tuple)) and len(data_source) > 0 and isinstance(data_source[0], str)):
-        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = load_subgraph_arrays_from_jsonls(data_source)
-        if len(cov_pcts) == 0:
-            print("No valid subgraphs loaded from JSONL path(s).")
-            return
-    elif isinstance(data_source, dict):
-        communities = data_source.get("cohesive_communities", [])
-        if not communities:
-            print("No connected cohesive communities available to plot.")
-            return
-        cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
-        pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
-        sizes = np.array([c["size"] for c in communities], dtype=np.int16)
-        pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
-        neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
-    else:
-        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = data_source
+def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title: str = "Combinatorial Connected Subgraphs Statistical Suite") -> None:
+    """Plot comprehensive 4-part statistical suite for a single candidate subset execution dictionary."""
+    communities = analysis_results.get("cohesive_communities", [])
+    if not communities:
+        print("No connected cohesive communities available to plot.")
+        return
+    cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
+    pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
+    sizes = np.array([c["size"] for c in communities], dtype=np.int16)
+    pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
+    neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
         
     _plot_combinatorial_statistical_suite_from_arrays(
         cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
     )
 
 
-def plot_macro_combinatorial_statistical_suite_from_jsonls(
-    jsonl_paths_or_dir: Any,
-    title: str = "Macro Combinatorial Threat Subgraph Statistical Suite"
-) -> None:
-    """Stream primitive arrays from all JSONL files in a folder or file list and plot the suite."""
-    plot_combinatorial_statistical_suite(jsonl_paths_or_dir, title=title)
+def plot_macro_combinatorial_statistical_suite_from_jsonls(path: str, title: str = "Macro Combinatorial Threat Subgraph Statistical Suite") -> None:
+    """Stream primitive arrays from either a single JSONL file or a directory of JSONL files and plot the suite."""
+    cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = load_subgraph_arrays_from_jsonl(path)
+    if len(cov_pcts) == 0:
+        print("No valid subgraphs loaded from JSONL path.")
+        return
+    _plot_combinatorial_statistical_suite_from_arrays(
+        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
+    )
 
 
 def _plot_combinatorial_statistical_suite_from_arrays(
