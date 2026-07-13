@@ -1220,43 +1220,24 @@ def load_subgraph_arrays_from_jsonl(path: str) -> tuple[np.ndarray, np.ndarray, 
     return cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr
 
 
-def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title: str = "Combinatorial Connected Subgraphs Statistical Suite") -> None:
-    """Plot comprehensive 4-part statistical suite for a single candidate subset execution dictionary."""
-    communities = analysis_results.get("cohesive_communities", [])
-    if not communities:
-        print("No connected cohesive communities available to plot.")
-        return
-    cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
-    pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
-    sizes = np.array([c["size"] for c in communities], dtype=np.int16)
-    pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
-    neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
+def plot_combinatorial_statistical_suite(source: dict[str, Any] | str, title: str = "Combinatorial Threat Subgraph Statistical Suite") -> None:
+    """Plot comprehensive 4-part statistical suite directly from an analysis dict OR a disk JSONL file/directory."""
+    if isinstance(source, str):
+        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = load_subgraph_arrays_from_jsonl(source)
+        if len(cov_pcts) == 0:
+            print("No valid subgraphs loaded from JSONL path.")
+            return
+    else:
+        communities = source.get("cohesive_communities", [])
+        if not communities:
+            print("No connected cohesive communities available to plot.")
+            return
+        cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
+        pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
+        sizes = np.array([c["size"] for c in communities], dtype=np.int16)
+        pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
+        neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
         
-    _plot_combinatorial_statistical_suite_from_arrays(
-        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
-    )
-
-
-def plot_combinatorial_statistical_suite_from_jsonl(path: str, title: str = "Combinatorial Threat Subgraph Statistical Suite") -> None:
-    """Stream primitive arrays from either a single JSONL file or a directory of JSONL files and plot the suite."""
-    cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = load_subgraph_arrays_from_jsonl(path)
-    if len(cov_pcts) == 0:
-        print("No valid subgraphs loaded from JSONL path.")
-        return
-    _plot_combinatorial_statistical_suite_from_arrays(
-        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
-    )
-
-
-def _plot_combinatorial_statistical_suite_from_arrays(
-    cov_pcts: np.ndarray,
-    pos_cohesions: np.ndarray,
-    sizes: np.ndarray,
-    pos_edges_arr: np.ndarray,
-    neg_edges_arr: np.ndarray,
-    title: str
-) -> None:
-    """Core memory-bounded plotting engine for 4-Part Statistical Suite."""
     # Figure 1: Joint Hexbin & Topographic KDE Contours
     fig1, (ax2, ax2_kde) = plt.subplots(1, 2, figsize=(15, 6))
     
