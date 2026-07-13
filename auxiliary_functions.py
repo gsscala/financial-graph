@@ -1372,17 +1372,20 @@ def plot_combinatorial_statistical_suite(source: dict[str, Any] | str, title: st
             r_p99 = min(100.0, max(1.0, r_p99))
             x_grid_tier = np.linspace(0, r_p99, 300)
             
-            # Helper to safely compute smooth KDE curve
+            # Helper to safely compute smooth KDE curve with exact grid shape (300,)
             def _safe_kde(data_arr):
-                if len(data_arr) < 3 or np.std(data_arr) < 1e-5:
-                    hist, _ = np.histogram(data_arr, bins=40, range=(0, r_p99), density=True)
-                    return ndi.gaussian_filter1d(hist, sigma=2.0)
+                if len(data_arr) < 2:
+                    return np.zeros_like(x_grid_tier)
+                if np.std(data_arr) < 1e-5:
+                    mu = float(np.mean(data_arr))
+                    sigma = max(0.5, 0.02 * r_p99)
+                    return np.exp(-0.5 * ((x_grid_tier - mu) / sigma)**2) / (sigma * np.sqrt(2 * np.pi))
                 try:
                     kde = gaussian_kde(data_arr, bw_method="scott")
                     return kde(x_grid_tier)
                 except Exception:
-                    hist, _ = np.histogram(data_arr, bins=40, range=(0, r_p99), density=True)
-                    return ndi.gaussian_filter1d(hist, sigma=2.0)
+                    hist, _ = np.histogram(data_arr, bins=len(x_grid_tier), range=(0, r_p99), density=True)
+                    return ndi.gaussian_filter1d(hist, sigma=5.0)
                     
             y_cov = _safe_kde(cov_tier)
             y_coh = _safe_kde(coh_tier)
