@@ -11,6 +11,7 @@ This module provides production-grade utilities for analyzing social network gra
 """
 
 import os
+import glob
 import json
 import math
 import random
@@ -1192,37 +1193,95 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     3. Pareto-Optimal Frontier (Threat Coverage vs. Positive Cohesion).
     4. Subgraph Size (k) scaling analysis.
     """
-    communities = analysis_results.get("cohesive_communities", [])
-    if not communities:
-        print("No connected cohesive communities available to plot.")
+    if isinstance(analysis_results, dict):
+        communities = analysis_results.get("cohesive_communities", [])
+        if not communities:
+            print("No connected cohesive communities available to plot.")
+            return
+        cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
+        pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
+        sizes = np.array([c["size"] for c in communities], dtype=np.int16)
+        pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
+        neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
+    else:
+        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = analysis_results
+        
+    _plot_combinatorial_statistical_suite_from_arrays(
+        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
+    )
+
+
+def plot_macro_combinatorial_statistical_suite_from_jsonls(
+    jsonl_paths_or_dir: Any,
+    title: str = "Macro Combinatorial Threat Subgraph Statistical Suite"
+) -> None:
+    """Stream primitive arrays from all JSONL files in a folder or file list without RAM blowup.
+    Only keeps 18 bytes/subgraph in C memory and renders all 4 statistical figures.
+    """
+    if isinstance(jsonl_paths_or_dir, str):
+        if os.path.isdir(jsonl_paths_or_dir):
+            files = sorted(glob.glob(os.path.join(jsonl_paths_or_dir, "*.jsonl")))
+        else:
+            files = [jsonl_paths_or_dir]
+    else:
+        files = list(jsonl_paths_or_dir)
+        
+    if not files:
+        print("No JSONL files found for macro statistical suite.")
         return
         
-    cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=float)
-    pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=float)
-    sizes = np.array([c["size"] for c in communities], dtype=int)
-    pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=float)
-    neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=float)
+    cov_list = []
+    coh_list = []
+    size_list = []
+    pos_e_list = []
+    neg_e_list = []
     
-    # Figure 1: Positive Cohesion across Global Negative Coverage Bins, Joint Hexbin & Topographic KDE Contours
-    fig1 = plt.figure(figsize=(18, 5.5))
+    total_rows = 0
+    for filepath in tqdm(files, desc="Streaming JSONL files for Macro Suite"):
+        try:
+            with open(filepath, "r", encoding="utf-8") as f:
+                for line in f:
+                    line = line.strip()
+                    if not line:
+                        continue
+                    obj = json.loads(line)
+                    cov_list.append(float(obj.get("neg_coverage_pct", 0.0)))
+                    coh_list.append(float(obj.get("pos_cohesion_pct", 0.0)))
+                    size_list.append(int(obj.get("size", len(obj.get("nodes", [])))))
+                    pos_e_list.append(float(obj.get("pos_edges", 0.0)))
+                    neg_e_list.append(float(obj.get("neg_edges", 0.0)))
+                    total_rows += 1
+        except Exception:
+            continue
+            
+    if total_rows == 0:
+        print("No valid subgraph rows loaded from JSONL files.")
+        return
+        
+    cov_pcts = np.array(cov_list, dtype=np.float32)
+    pos_cohesions = np.array(coh_list, dtype=np.float32)
+    sizes = np.array(size_list, dtype=np.int16)
+    pos_edges_arr = np.array(pos_e_list, dtype=np.float32)
+    neg_edges_arr = np.array(neg_e_list, dtype=np.float32)
     
-    ax1 = fig1.add_subplot(1, 3, 1)
-    unique_covs = np.unique(cov_pcts)
-    if len(unique_covs) <= 15:
-        data_by_cov = [pos_cohesions[cov_pcts == val] for val in unique_covs]
-        labels_cov = [f"{val:.1f}%" for val in unique_covs]
-        ax1.boxplot(data_by_cov, positions=range(len(unique_covs)), widths=0.5, patch_artist=True,
-                    boxprops=dict(facecolor="#3498db", alpha=0.7), medianprops=dict(color="#e74c3c", lw=2))
-        ax1.set_xticks(range(len(unique_covs)))
-        ax1.set_xticklabels(labels_cov, rotation=45)
-    else:
-        ax1.scatter(cov_pcts, pos_cohesions, alpha=0.3, color="#3498db", edgecolors="none")
-    ax1.set_title("Positive Cohesion (%) by Global Neg Coverage", fontsize=11, fontweight="bold")
-    ax1.set_xlabel("Global Negative Edge Coverage (%)", fontsize=10)
-    ax1.set_ylabel("Internal Positive Cohesion (%)", fontsize=10)
-    ax1.grid(True, linestyle="--", alpha=0.4)
+    print(f"Loaded {total_rows:,} subgraphs across {len(files)} JSONL files into compact memory (~{(total_rows * 18) / (1024*1024):.2f} MB).")
+    _plot_combinatorial_statistical_suite_from_arrays(
+        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
+    )
+
+
+def _plot_combinatorial_statistical_suite_from_arrays(
+    cov_pcts: np.ndarray,
+    pos_cohesions: np.ndarray,
+    sizes: np.ndarray,
+    pos_edges_arr: np.ndarray,
+    neg_edges_arr: np.ndarray,
+    title: str
+) -> None:
+    """Core memory-bounded plotting engine for 4-Part Statistical Suite."""
+    # Figure 1: Joint Hexbin & Topographic KDE Contours
+    fig1, (ax2, ax2_kde) = plt.subplots(1, 2, figsize=(15, 6))
     
-    ax2 = fig1.add_subplot(1, 3, 2)
     hb = ax2.hexbin(cov_pcts, pos_cohesions, gridsize=20, cmap="YlOrRd", mincnt=1)
     fig1.colorbar(hb, ax=ax2, label="Subgraph Count")
     ax2.set_title("2D Joint Hexbin Density", fontsize=11, fontweight="bold")
@@ -1230,7 +1289,6 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     ax2.set_ylabel("Internal Positive Cohesion (%)", fontsize=10)
     ax2.grid(True, linestyle="--", alpha=0.4)
     
-    ax2_kde = fig1.add_subplot(1, 3, 3)
     H_grid, xedges, yedges = np.histogram2d(cov_pcts, pos_cohesions, bins=35)
     H_smooth = ndi.gaussian_filter(H_grid, sigma=1.2)
     X_grid, Y_grid = np.meshgrid(0.5 * (xedges[:-1] + xedges[1:]), 0.5 * (yedges[:-1] + yedges[1:]))
@@ -1242,14 +1300,19 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     ax2_kde.set_ylabel("Internal Positive Cohesion (%)", fontsize=10)
     ax2_kde.grid(True, linestyle="--", alpha=0.4)
     
-    plt.suptitle(f"{title} - Part 1: Coverage & Cohesion Distributions & Phase Space", fontsize=14, fontweight="bold", y=1.02)
+    plt.suptitle(f"{title} - Part 1: Joint Phase Space & KDE Topography", fontsize=14, fontweight="bold", y=1.02)
     plt.tight_layout()
     plt.show()
     
     # Figure 2: Pareto Frontier & Subgraph Size Scaling
     fig2, (ax3, ax4) = plt.subplots(1, 2, figsize=(15, 6))
     
-    ax3.scatter(cov_pcts, pos_cohesions, c=sizes, cmap="viridis", alpha=0.4, edgecolors="none")
+    n_pts = len(cov_pcts)
+    if n_pts > 50000:
+        idx_bg = np.random.choice(n_pts, size=50000, replace=False)
+        ax3.scatter(cov_pcts[idx_bg], pos_cohesions[idx_bg], c=sizes[idx_bg], cmap="viridis", alpha=0.35, edgecolors="none")
+    else:
+        ax3.scatter(cov_pcts, pos_cohesions, c=sizes, cmap="viridis", alpha=0.4, edgecolors="none")
     
     # O(N log N) Pareto frontier calculation across 100% of points
     order = np.lexsort((-pos_cohesions, -cov_pcts))
@@ -1277,33 +1340,27 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     
     mean_cov = [np.mean(cov_pcts[sizes == s]) for s in unique_sizes]
     median_cov = [np.median(cov_pcts[sizes == s]) for s in unique_sizes]
-    q25_cov = [np.percentile(cov_pcts[sizes == s], 25) for s in unique_sizes]
-    q75_cov = [np.percentile(cov_pcts[sizes == s], 75) for s in unique_sizes]
     
     mean_coh = [np.mean(pos_cohesions[sizes == s]) for s in unique_sizes]
     median_coh = [np.median(pos_cohesions[sizes == s]) for s in unique_sizes]
-    q25_coh = [np.percentile(pos_cohesions[sizes == s], 25) for s in unique_sizes]
-    q75_coh = [np.percentile(pos_cohesions[sizes == s], 75) for s in unique_sizes]
     
     ax4_twin = ax4.twinx()
     
-    # Coverage (left axis)
-    band_cov = ax4.fill_between(unique_sizes, q25_cov, q75_cov, color="#e74c3c", alpha=0.2, label="Neg Cov IQR (Q25-Q75)")
-    l1_med = ax4.plot(unique_sizes, median_cov, color="#e74c3c", marker="o", lw=2.5, label="Median Neg Coverage (%)")
-    l1_mean = ax4.plot(unique_sizes, mean_cov, color="#c0392b", marker="^", lw=1.5, linestyle="--", label="Mean Neg Coverage (%)")
+    # Coverage (left axis) - Mean continuous, Median dotted
+    l1_mean = ax4.plot(unique_sizes, mean_cov, color="#e74c3c", marker="o", lw=2.5, linestyle="-", label="Mean Neg Coverage (%)")
+    l1_med = ax4.plot(unique_sizes, median_cov, color="#c0392b", marker="^", lw=2.5, linestyle=":", label="Median Neg Coverage (%)")
     
-    # Cohesion (right axis)
-    band_coh = ax4_twin.fill_between(unique_sizes, q25_coh, q75_coh, color="#2ecc71", alpha=0.2, label="Pos Cohesion IQR (Q25-Q75)")
-    l2_med = ax4_twin.plot(unique_sizes, median_coh, color="#2ecc71", marker="s", lw=2.5, label="Median Pos Cohesion (%)")
-    l2_mean = ax4_twin.plot(unique_sizes, mean_coh, color="#27ae60", marker="v", lw=1.5, linestyle="--", label="Mean Pos Cohesion (%)")
+    # Cohesion (right axis) - Mean continuous, Median dotted
+    l2_mean = ax4_twin.plot(unique_sizes, mean_coh, color="#2ecc71", marker="s", lw=2.5, linestyle="-", label="Mean Pos Cohesion (%)")
+    l2_med = ax4_twin.plot(unique_sizes, median_coh, color="#27ae60", marker="v", lw=2.5, linestyle=":", label="Median Pos Cohesion (%)")
     
-    ax4.set_title("Scaling Across Subgraph Sizes (k): Medians, Means & IQRs", fontsize=12, fontweight="bold")
+    ax4.set_title("Scaling Across Subgraph Sizes (k): Means & Medians", fontsize=12, fontweight="bold")
     ax4.set_xlabel("Subgraph Size (k)", fontsize=10)
     ax4.set_ylabel("Global Negative Coverage (%)", color="#e74c3c", fontsize=10)
     ax4_twin.set_ylabel("Internal Positive Cohesion (%)", color="#2ecc71", fontsize=10)
     ax4.grid(True, linestyle="--", alpha=0.4)
     
-    lines = l1_med + l1_mean + [band_cov] + l2_med + l2_mean + [band_coh]
+    lines = l1_mean + l1_med + l2_mean + l2_med
     labels = [line.get_label() for line in lines]
     ax4.legend(lines, labels, loc="best", fontsize=8.5)
     
@@ -1311,17 +1368,23 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     plt.tight_layout()
     plt.show()
     
-    # Figure 3: ECDF Survival Curves, Separated & Stacked Edge Composition & Kingpin Node Coreness
-    fig3, ((ax5, ax6_sep), (ax6_stacked, ax7)) = plt.subplots(2, 2, figsize=(16, 11))
+    # Figure 3: ECDF Survival Curves, Separated & Stacked Edge Composition (Actual Edges Only)
+    fig3, (ax5, ax6_sep, ax6_stacked) = plt.subplots(1, 3, figsize=(18, 5.5))
     
     # 3A: Complementary ECDF (Survival Curves P(X > x)) in O(N log N)
     cov_sorted = np.sort(cov_pcts)
     coh_sorted = np.sort(pos_cohesions)
-    n_tot = len(communities)
+    n_tot = len(communities) if isinstance(cov_pcts, list) else len(cov_sorted)
     survival_probs = 1.0 - np.arange(1, n_tot + 1) / float(n_tot)
     
-    ax5.plot(cov_sorted, survival_probs, color="#e74c3c", lw=2.2, label="Global Neg Coverage (%)")
-    ax5.plot(coh_sorted, survival_probs, color="#2ecc71", lw=2.2, label="Internal Pos Cohesion (%)")
+    if n_tot > 5000:
+        idx_step = np.linspace(0, n_tot - 1, 5000, dtype=int)
+        ax5.plot(cov_sorted[idx_step], survival_probs[idx_step], color="#e74c3c", lw=2.2, label="Global Neg Coverage (%)")
+        ax5.plot(coh_sorted[idx_step], survival_probs[idx_step], color="#2ecc71", lw=2.2, label="Internal Pos Cohesion (%)")
+    else:
+        ax5.plot(cov_sorted, survival_probs, color="#e74c3c", lw=2.2, label="Global Neg Coverage (%)")
+        ax5.plot(coh_sorted, survival_probs, color="#2ecc71", lw=2.2, label="Internal Pos Cohesion (%)")
+        
     ax5.set_yscale("log")
     ax5.set_title("Survival ECDF P(X > x) [Log Scale]", fontsize=11, fontweight="bold")
     ax5.set_xlabel("Metric Value (%)", fontsize=10)
@@ -1329,89 +1392,95 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     ax5.grid(True, which="both", linestyle="--", alpha=0.4)
     ax5.legend(loc="best", fontsize=9)
     
-    # Compute edge proportions by size k in O(N)
+    # Compute edge proportions out of actual existing edges by size k in O(N)
     unique_k = np.unique(sizes)
     prop_pos = []
     prop_neg = []
-    prop_unconnected = []
     for k in unique_k:
-        max_possible = k * (k - 1) / 2.0
         mask_k = (sizes == k)
-        mean_p = np.mean(pos_edges_arr[mask_k]) / max_possible * 100.0
-        mean_n = np.mean(neg_edges_arr[mask_k]) / max_possible * 100.0
-        mean_u = max(0.0, 100.0 - (mean_p + mean_n))
+        pos_k = pos_edges_arr[mask_k]
+        neg_k = neg_edges_arr[mask_k]
+        total_k = np.maximum(1.0, pos_k + neg_k)
+        mean_p = np.mean((pos_k / total_k) * 100.0)
+        mean_n = 100.0 - mean_p
         prop_pos.append(mean_p)
         prop_neg.append(mean_n)
-        prop_unconnected.append(mean_u)
         
-    # 3B: Separated Edge Phase Curves across Size k
-    ax6_sep.plot(unique_k, prop_pos, color="#2ecc71", marker="o", lw=2.2, label="Internal Pos Edges (%)")
-    ax6_sep.plot(unique_k, prop_neg, color="#e74c3c", marker="^", lw=2.2, label="Internal Neg Edges (%)")
-    ax6_sep.plot(unique_k, prop_unconnected, color="#7f8c8d", marker="s", lw=2.2, label="Unconnected Pairs (%)")
-    ax6_sep.set_title("Separated Edge Phase Trajectories by Size k", fontsize=11, fontweight="bold")
+    # 3B: Separated Edge Phase Curves across Size k (Actual Edges Only)
+    ax6_sep.plot(unique_k, prop_pos, color="#2ecc71", marker="o", lw=2.5, label="Internal Pos Edges (%)")
+    ax6_sep.plot(unique_k, prop_neg, color="#e74c3c", marker="^", lw=2.5, label="Internal Neg Edges (%)")
+    ax6_sep.set_title("Separated Edge Phase Trajectories (Actual Edges)", fontsize=11, fontweight="bold")
     ax6_sep.set_xlabel("Subgraph Size (k)", fontsize=10)
-    ax6_sep.set_ylabel("Proportion of Possible Pairs (%)", fontsize=10)
+    ax6_sep.set_ylabel("Share of Actual Edges (%)", fontsize=10)
+    ax6_sep.set_ylim(0, 105)
     ax6_sep.grid(True, linestyle="--", alpha=0.4)
     ax6_sep.legend(loc="best", fontsize=9)
     
-    # 3C: 100% Stacked Edge Composition across Size k
+    # 3C: 100% Stacked Edge Composition across Size k (Actual Edges Only)
     ax6_stacked.bar(unique_k, prop_pos, color="#2ecc71", edgecolor="white", width=0.6, label="Internal Pos Edges (%)")
     ax6_stacked.bar(unique_k, prop_neg, bottom=prop_pos, color="#e74c3c", edgecolor="white", width=0.6, label="Internal Neg Edges (%)")
-    bottom_unconn = np.array(prop_pos) + np.array(prop_neg)
-    ax6_stacked.bar(unique_k, prop_unconnected, bottom=bottom_unconn, color="#95a5a6", edgecolor="white", width=0.6, label="Unconnected Pairs (%)")
-    ax6_stacked.set_title("100% Stacked Edge Composition by Size k", fontsize=11, fontweight="bold")
+    ax6_stacked.set_title("100% Stacked Edge Composition (Actual Edges)", fontsize=11, fontweight="bold")
     ax6_stacked.set_xlabel("Subgraph Size (k)", fontsize=10)
-    ax6_stacked.set_ylabel("Stacked Proportion (%)", fontsize=10)
+    ax6_stacked.set_ylabel("Share of Actual Edges (%)", fontsize=10)
     ax6_stacked.set_ylim(0, 100)
     ax6_stacked.grid(True, linestyle="--", alpha=0.4, axis="y")
     ax6_stacked.legend(loc="upper right", fontsize=8.5)
     
-    # 3D: Kingpin Node Coreness Frequency among Elite Threat Subgraphs
-    elite_cutoff_cov = np.percentile(cov_pcts, 95)
-    elite_cutoff_coh = np.percentile(pos_cohesions, 95)
-    elite_mask = (cov_pcts >= elite_cutoff_cov) | (pos_cohesions >= elite_cutoff_coh)
-    
-    node_counter = Counter()
-    elite_count = 0
-    for idx, c in enumerate(communities):
-        if elite_mask[idx]:
-            elite_count += 1
-            for n in c["nodes"]:
-                node_counter[n] += 1
-                
-    if elite_count > 0 and node_counter:
-        top_nodes = node_counter.most_common(12)
-        node_ids = [str(item[0]) for item in top_nodes][::-1]
-        freq_pcts = [(item[1] / float(elite_count)) * 100.0 for item in top_nodes][::-1]
-        ax7.barh(node_ids, freq_pcts, color="#8e44ad", edgecolor="white", alpha=0.85)
-        ax7.set_title(f"Top Kingpin Nodes in Elite Subgraphs (n={elite_count})", fontsize=11, fontweight="bold")
-        ax7.set_xlabel("Inclusion Frequency in Elite Subgraphs (%)", fontsize=10)
-        ax7.set_ylabel("Node ID", fontsize=10)
-        ax7.grid(True, linestyle="--", alpha=0.4, axis="x")
-    else:
-        ax7.axis("off")
-        
-    plt.suptitle(f"{title} - Part 3: Survival ECDF, Separated/Stacked Edge Composition & Kingpins", fontsize=14, fontweight="bold", y=1.02)
+    plt.suptitle(f"{title} - Part 3: Survival ECDF & Edge Phase Composition", fontsize=14, fontweight="bold", y=1.02)
     plt.tight_layout()
     plt.show()
     
-    # Figure 4: Horizontal Violin Distribution across Subgraph Sizes k
-    fig4, ax8 = plt.subplots(1, 1, figsize=(14, 5))
+    # Figure 4: Tri-Tier Subgraph Size Partitioning: Overlaid KDEs for Cohesion & Coverage
+    fig4, axes_tiers = plt.subplots(1, 3, figsize=(18, 5.5))
     
-    violin_data = [pos_cohesions[sizes == k] for k in unique_k]
-    parts = ax8.violinplot(violin_data, positions=unique_k, vert=False, showmeans=True, showmedians=True)
-    for pc in parts['bodies']:
-        pc.set_facecolor('#1abc9c')
-        pc.set_edgecolor('#16a085')
-        pc.set_alpha(0.65)
-    ax8.set_yticks(unique_k)
-    ax8.set_yticklabels([f"k={k}" for k in unique_k])
-    ax8.set_title("Positive Cohesion (%) Distribution Density by Subgraph Size k (Violin Joyplot)", fontsize=12, fontweight="bold")
-    ax8.set_xlabel("Internal Positive Cohesion (%)", fontsize=10)
-    ax8.set_ylabel("Subgraph Size (k)", fontsize=10)
-    ax8.grid(True, linestyle="--", alpha=0.4)
+    unique_k = np.sort(np.unique(sizes))
+    tier_splits = np.array_split(unique_k, 3)
+    tier_names = ["Small Subgraph Tier", "Medium Subgraph Tier", "Large Subgraph Tier"]
+    x_grid = np.linspace(0, 100, 300)
     
-    plt.suptitle(f"{title} - Part 4: Size-Conditioned Cohesion Density", fontsize=14, fontweight="bold", y=1.02)
+    for i, tier_k in enumerate(tier_splits):
+        ax_t = axes_tiers[i]
+        if len(tier_k) == 0:
+            ax_t.axis("off")
+            continue
+            
+        k_min_tier = int(np.min(tier_k))
+        k_max_tier = int(np.max(tier_k))
+        mask_tier = np.isin(sizes, tier_k)
+        
+        cov_tier = cov_pcts[mask_tier]
+        coh_tier = pos_cohesions[mask_tier]
+        
+        # Helper to safely compute smooth KDE curve
+        def _safe_kde(data_arr):
+            if len(data_arr) < 3 or np.std(data_arr) < 1e-5:
+                hist, _ = np.histogram(data_arr, bins=40, range=(0, 100), density=True)
+                return ndi.gaussian_filter1d(hist, sigma=2.0)
+            try:
+                kde = gaussian_kde(data_arr, bw_method="scott")
+                return kde(x_grid)
+            except Exception:
+                hist, _ = np.histogram(data_arr, bins=40, range=(0, 100), density=True)
+                return ndi.gaussian_filter1d(hist, sigma=2.0)
+                
+        if len(cov_tier) > 0:
+            y_cov = _safe_kde(cov_tier)
+            y_coh = _safe_kde(coh_tier)
+            
+            ax_t.plot(x_grid, y_coh, color="#2ecc71", lw=2.5, label="Internal Pos Cohesion (%) KDE")
+            ax_t.fill_between(x_grid, 0, y_coh, color="#2ecc71", alpha=0.25)
+            
+            ax_t.plot(x_grid, y_cov, color="#e74c3c", lw=2.5, label="Global Neg Coverage (%) KDE")
+            ax_t.fill_between(x_grid, 0, y_cov, color="#e74c3c", alpha=0.25)
+            
+        ax_t.set_title(f"{tier_names[i]}\nSizes k ∈ [{k_min_tier}, {k_max_tier}] (n={len(cov_tier)})", fontsize=11, fontweight="bold")
+        ax_t.set_xlabel("Metric Value (%)", fontsize=10)
+        ax_t.set_ylabel("Probability Density", fontsize=10)
+        ax_t.set_xlim(0, 100)
+        ax_t.grid(True, linestyle="--", alpha=0.4)
+        ax_t.legend(loc="best", fontsize=8.5)
+        
+    plt.suptitle(f"{title} - Part 4: Tri-Tier Size Partitioning Overlaid KDE Phase Distributions", fontsize=14, fontweight="bold", y=1.02)
     plt.tight_layout()
     plt.show()
 
