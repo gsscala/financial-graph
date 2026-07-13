@@ -1184,37 +1184,8 @@ def plot_candidate_subsets_analysis(
     plt.show()
 
 
-def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title: str = "Combinatorial Connected Subgraphs Statistical Suite") -> None:
-    """Plot a comprehensive statistical distribution suite for combinatorial connected subgraphs.
-    
-    Includes:
-    1. Positive Cohesion (%) distribution across Global Negative Coverage levels.
-    2. 2D Joint Histogram (Hexbin / Scatter Density) with marginal histograms.
-    3. Pareto-Optimal Frontier (Threat Coverage vs. Positive Cohesion).
-    4. Subgraph Size (k) scaling analysis.
-    """
-    communities = analysis_results.get("cohesive_communities", [])
-    if not communities:
-        print("No connected cohesive communities available to plot.")
-        return
-    cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
-    pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
-    sizes = np.array([c["size"] for c in communities], dtype=np.int16)
-    pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
-    neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
-        
-    _plot_combinatorial_statistical_suite_from_arrays(
-        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
-    )
-
-
-def plot_macro_combinatorial_statistical_suite_from_jsonls(
-    jsonl_paths_or_dir: Any,
-    title: str = "Macro Combinatorial Threat Subgraph Statistical Suite"
-) -> None:
-    """Stream primitive arrays from all JSONL files in a folder or file list without RAM blowup.
-    Only keeps 18 bytes/subgraph in C memory and renders all 4 statistical figures.
-    """
+def load_subgraph_arrays_from_jsonls(jsonl_paths_or_dir: Any) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Stream primitive arrays directly from one or more JSONL files or directories into compact memory (18 bytes/subgraph)."""
     if isinstance(jsonl_paths_or_dir, str):
         if os.path.isdir(jsonl_paths_or_dir):
             files = sorted(glob.glob(os.path.join(jsonl_paths_or_dir, "*.jsonl")))
@@ -1223,10 +1194,6 @@ def plot_macro_combinatorial_statistical_suite_from_jsonls(
     else:
         files = list(jsonl_paths_or_dir)
         
-    if not files:
-        print("No JSONL files found for macro statistical suite.")
-        return
-        
     cov_list = []
     coh_list = []
     size_list = []
@@ -1234,7 +1201,7 @@ def plot_macro_combinatorial_statistical_suite_from_jsonls(
     neg_e_list = []
     
     total_rows = 0
-    for filepath in tqdm(files, desc="Streaming JSONL files for Macro Suite"):
+    for filepath in tqdm(files, desc="Streaming JSONL subgraphs into arrays"):
         try:
             with open(filepath, "r", encoding="utf-8") as f:
                 for line in f:
@@ -1251,20 +1218,47 @@ def plot_macro_combinatorial_statistical_suite_from_jsonls(
         except Exception:
             continue
             
-    if total_rows == 0:
-        print("No valid subgraph rows loaded from JSONL files.")
-        return
-        
     cov_pcts = np.array(cov_list, dtype=np.float32)
     pos_cohesions = np.array(coh_list, dtype=np.float32)
     sizes = np.array(size_list, dtype=np.int16)
     pos_edges_arr = np.array(pos_e_list, dtype=np.float32)
     neg_edges_arr = np.array(neg_e_list, dtype=np.float32)
     
-    print(f"Loaded {total_rows:,} subgraphs across {len(files)} JSONL files into compact memory (~{(total_rows * 18) / (1024*1024):.2f} MB).")
+    print(f"Loaded {total_rows:,} subgraphs across {len(files)} JSONL file(s) into compact memory (~{(total_rows * 18) / (1024*1024):.2f} MB).")
+    return cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr
+
+
+def plot_combinatorial_statistical_suite(data_source: Any, title: str = "Combinatorial Connected Subgraphs Statistical Suite") -> None:
+    """Plot a comprehensive statistical distribution suite from either an analysis_results dict, a JSONL path/dir, or pre-extracted arrays."""
+    if isinstance(data_source, str) or (isinstance(data_source, (list, tuple)) and len(data_source) > 0 and isinstance(data_source[0], str)):
+        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = load_subgraph_arrays_from_jsonls(data_source)
+        if len(cov_pcts) == 0:
+            print("No valid subgraphs loaded from JSONL path(s).")
+            return
+    elif isinstance(data_source, dict):
+        communities = data_source.get("cohesive_communities", [])
+        if not communities:
+            print("No connected cohesive communities available to plot.")
+            return
+        cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
+        pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
+        sizes = np.array([c["size"] for c in communities], dtype=np.int16)
+        pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
+        neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
+    else:
+        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = data_source
+        
     _plot_combinatorial_statistical_suite_from_arrays(
         cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
     )
+
+
+def plot_macro_combinatorial_statistical_suite_from_jsonls(
+    jsonl_paths_or_dir: Any,
+    title: str = "Macro Combinatorial Threat Subgraph Statistical Suite"
+) -> None:
+    """Stream primitive arrays from all JSONL files in a folder or file list and plot the suite."""
+    plot_combinatorial_statistical_suite(jsonl_paths_or_dir, title=title)
 
 
 def _plot_combinatorial_statistical_suite_from_arrays(
@@ -1341,89 +1335,46 @@ def _plot_combinatorial_statistical_suite_from_arrays(
     mean_coh = [np.mean(pos_cohesions[sizes == s]) for s in unique_sizes]
     median_coh = [np.median(pos_cohesions[sizes == s]) for s in unique_sizes]
     
-    ax4_twin = ax4.twinx()
-    
-    # Coverage (left axis) - Mean continuous, Median dotted
-    l1_mean = ax4.plot(unique_sizes, mean_cov, color="#e74c3c", marker="o", lw=2.5, linestyle="-", label="Mean Neg Coverage (%)")
-    l1_med = ax4.plot(unique_sizes, median_cov, color="#c0392b", marker="^", lw=2.5, linestyle=":", label="Median Neg Coverage (%)")
-    
-    # Cohesion (right axis) - Mean continuous, Median dotted
-    l2_mean = ax4_twin.plot(unique_sizes, mean_coh, color="#2ecc71", marker="s", lw=2.5, linestyle="-", label="Mean Pos Cohesion (%)")
-    l2_med = ax4_twin.plot(unique_sizes, median_coh, color="#27ae60", marker="v", lw=2.5, linestyle=":", label="Median Pos Cohesion (%)")
+    # Plot both Coverage & Cohesion Means/Medians on the single shared ax4 Y-axis (%)
+    ax4.plot(unique_sizes, mean_cov, color="#e74c3c", marker="o", lw=2.5, linestyle="-", label="Mean Neg Coverage (%)")
+    ax4.plot(unique_sizes, median_cov, color="#c0392b", marker="^", lw=2.5, linestyle=":", label="Median Neg Coverage (%)")
+    ax4.plot(unique_sizes, mean_coh, color="#2ecc71", marker="s", lw=2.5, linestyle="-", label="Mean Pos Cohesion (%)")
+    ax4.plot(unique_sizes, median_coh, color="#27ae60", marker="v", lw=2.5, linestyle=":", label="Median Pos Cohesion (%)")
     
     ax4.set_title("Scaling Across Subgraph Sizes (k): Means & Medians", fontsize=12, fontweight="bold")
     ax4.set_xlabel("Subgraph Size (k)", fontsize=10)
-    ax4.set_ylabel("Global Negative Coverage (%)", color="#e74c3c", fontsize=10)
-    ax4_twin.set_ylabel("Internal Positive Cohesion (%)", color="#2ecc71", fontsize=10)
+    ax4.set_ylabel("Metric Value (%)", fontsize=10)
     ax4.grid(True, linestyle="--", alpha=0.4)
-    
-    lines = l1_mean + l1_med + l2_mean + l2_med
-    labels = [line.get_label() for line in lines]
-    ax4.legend(lines, labels, loc="best", fontsize=8.5)
+    ax4.legend(loc="best", fontsize=8.5)
     
     plt.suptitle(f"{title} - Part 2: Pareto Optimality & Size Scaling", fontsize=14, fontweight="bold", y=1.02)
     plt.tight_layout()
     plt.show()
     
-    # Figure 3: ECDF Survival Curves, Separated & Stacked Edge Composition (Actual Edges Only)
-    fig3, (ax5, ax6_sep, ax6_stacked) = plt.subplots(1, 3, figsize=(18, 5.5))
+    # Figure 3: Survival ECDF Curves P(X > x)
+    fig3, ax5 = plt.subplots(1, 1, figsize=(10, 5.5))
     
-    # 3A: Complementary ECDF (Survival Curves P(X > x)) in O(N log N)
     cov_sorted = np.sort(cov_pcts)
     coh_sorted = np.sort(pos_cohesions)
-    n_tot = len(communities) if isinstance(cov_pcts, list) else len(cov_sorted)
+    n_tot = len(cov_sorted)
     survival_probs = 1.0 - np.arange(1, n_tot + 1) / float(n_tot)
     
     if n_tot > 5000:
         idx_step = np.linspace(0, n_tot - 1, 5000, dtype=int)
-        ax5.plot(cov_sorted[idx_step], survival_probs[idx_step], color="#e74c3c", lw=2.2, label="Global Neg Coverage (%)")
-        ax5.plot(coh_sorted[idx_step], survival_probs[idx_step], color="#2ecc71", lw=2.2, label="Internal Pos Cohesion (%)")
+        ax5.plot(cov_sorted[idx_step], survival_probs[idx_step], color="#e74c3c", lw=2.5, label="Global Neg Coverage (%)")
+        ax5.plot(coh_sorted[idx_step], survival_probs[idx_step], color="#2ecc71", lw=2.5, label="Internal Pos Cohesion (%)")
     else:
-        ax5.plot(cov_sorted, survival_probs, color="#e74c3c", lw=2.2, label="Global Neg Coverage (%)")
-        ax5.plot(coh_sorted, survival_probs, color="#2ecc71", lw=2.2, label="Internal Pos Cohesion (%)")
+        ax5.plot(cov_sorted, survival_probs, color="#e74c3c", lw=2.5, label="Global Neg Coverage (%)")
+        ax5.plot(coh_sorted, survival_probs, color="#2ecc71", lw=2.5, label="Internal Pos Cohesion (%)")
         
     ax5.set_yscale("log")
-    ax5.set_title("Survival ECDF P(X > x) [Log Scale]", fontsize=11, fontweight="bold")
+    ax5.set_title("Survival ECDF P(X > x) [Log Scale]", fontsize=12, fontweight="bold")
     ax5.set_xlabel("Metric Value (%)", fontsize=10)
     ax5.set_ylabel("Survival Probability P(X > x)", fontsize=10)
     ax5.grid(True, which="both", linestyle="--", alpha=0.4)
-    ax5.legend(loc="best", fontsize=9)
+    ax5.legend(loc="best", fontsize=10)
     
-    # Compute edge proportions out of actual existing edges by size k in O(N)
-    unique_k = np.unique(sizes)
-    prop_pos = []
-    prop_neg = []
-    for k in unique_k:
-        mask_k = (sizes == k)
-        pos_k = pos_edges_arr[mask_k]
-        neg_k = neg_edges_arr[mask_k]
-        total_k = np.maximum(1.0, pos_k + neg_k)
-        mean_p = np.mean((pos_k / total_k) * 100.0)
-        mean_n = 100.0 - mean_p
-        prop_pos.append(mean_p)
-        prop_neg.append(mean_n)
-        
-    # 3B: Separated Edge Phase Curves across Size k (Actual Edges Only)
-    ax6_sep.plot(unique_k, prop_pos, color="#2ecc71", marker="o", lw=2.5, label="Internal Pos Edges (%)")
-    ax6_sep.plot(unique_k, prop_neg, color="#e74c3c", marker="^", lw=2.5, label="Internal Neg Edges (%)")
-    ax6_sep.set_title("Separated Edge Phase Trajectories (Actual Edges)", fontsize=11, fontweight="bold")
-    ax6_sep.set_xlabel("Subgraph Size (k)", fontsize=10)
-    ax6_sep.set_ylabel("Share of Actual Edges (%)", fontsize=10)
-    ax6_sep.set_ylim(0, 105)
-    ax6_sep.grid(True, linestyle="--", alpha=0.4)
-    ax6_sep.legend(loc="best", fontsize=9)
-    
-    # 3C: 100% Stacked Edge Composition across Size k (Actual Edges Only)
-    ax6_stacked.bar(unique_k, prop_pos, color="#2ecc71", edgecolor="white", width=0.6, label="Internal Pos Edges (%)")
-    ax6_stacked.bar(unique_k, prop_neg, bottom=prop_pos, color="#e74c3c", edgecolor="white", width=0.6, label="Internal Neg Edges (%)")
-    ax6_stacked.set_title("100% Stacked Edge Composition (Actual Edges)", fontsize=11, fontweight="bold")
-    ax6_stacked.set_xlabel("Subgraph Size (k)", fontsize=10)
-    ax6_stacked.set_ylabel("Share of Actual Edges (%)", fontsize=10)
-    ax6_stacked.set_ylim(0, 100)
-    ax6_stacked.grid(True, linestyle="--", alpha=0.4, axis="y")
-    ax6_stacked.legend(loc="upper right", fontsize=8.5)
-    
-    plt.suptitle(f"{title} - Part 3: Survival ECDF & Edge Phase Composition", fontsize=14, fontweight="bold", y=1.02)
+    plt.suptitle(f"{title} - Part 3: Survival ECDF Distributions", fontsize=14, fontweight="bold", y=1.02)
     plt.tight_layout()
     plt.show()
     
@@ -1433,7 +1384,6 @@ def _plot_combinatorial_statistical_suite_from_arrays(
     unique_k = np.sort(np.unique(sizes))
     tier_splits = np.array_split(unique_k, 3)
     tier_names = ["Small Subgraph Tier", "Medium Subgraph Tier", "Large Subgraph Tier"]
-    x_grid = np.linspace(0, 100, 300)
     
     for i, tier_k in enumerate(tier_splits):
         ax_t = axes_tiers[i]
@@ -1448,32 +1398,37 @@ def _plot_combinatorial_statistical_suite_from_arrays(
         cov_tier = cov_pcts[mask_tier]
         coh_tier = pos_cohesions[mask_tier]
         
-        # Helper to safely compute smooth KDE curve
-        def _safe_kde(data_arr):
-            if len(data_arr) < 3 or np.std(data_arr) < 1e-5:
-                hist, _ = np.histogram(data_arr, bins=40, range=(0, 100), density=True)
-                return ndi.gaussian_filter1d(hist, sigma=2.0)
-            try:
-                kde = gaussian_kde(data_arr, bw_method="scott")
-                return kde(x_grid)
-            except Exception:
-                hist, _ = np.histogram(data_arr, bins=40, range=(0, 100), density=True)
-                return ndi.gaussian_filter1d(hist, sigma=2.0)
-                
+        r_p99 = 100.0
         if len(cov_tier) > 0:
+            r_p99 = float(max(np.percentile(cov_tier, 99.0), np.percentile(coh_tier, 99.0)))
+            r_p99 = min(100.0, max(1.0, r_p99))
+            x_grid_tier = np.linspace(0, r_p99, 300)
+            
+            # Helper to safely compute smooth KDE curve
+            def _safe_kde(data_arr):
+                if len(data_arr) < 3 or np.std(data_arr) < 1e-5:
+                    hist, _ = np.histogram(data_arr, bins=40, range=(0, r_p99), density=True)
+                    return ndi.gaussian_filter1d(hist, sigma=2.0)
+                try:
+                    kde = gaussian_kde(data_arr, bw_method="scott")
+                    return kde(x_grid_tier)
+                except Exception:
+                    hist, _ = np.histogram(data_arr, bins=40, range=(0, r_p99), density=True)
+                    return ndi.gaussian_filter1d(hist, sigma=2.0)
+                    
             y_cov = _safe_kde(cov_tier)
             y_coh = _safe_kde(coh_tier)
             
-            ax_t.plot(x_grid, y_coh, color="#2ecc71", lw=2.5, label="Internal Pos Cohesion (%) KDE")
-            ax_t.fill_between(x_grid, 0, y_coh, color="#2ecc71", alpha=0.25)
+            ax_t.plot(x_grid_tier, y_coh, color="#2ecc71", lw=2.5, label="Internal Pos Cohesion (%) KDE")
+            ax_t.fill_between(x_grid_tier, 0, y_coh, color="#2ecc71", alpha=0.25)
             
-            ax_t.plot(x_grid, y_cov, color="#e74c3c", lw=2.5, label="Global Neg Coverage (%) KDE")
-            ax_t.fill_between(x_grid, 0, y_cov, color="#e74c3c", alpha=0.25)
+            ax_t.plot(x_grid_tier, y_cov, color="#e74c3c", lw=2.5, label="Global Neg Coverage (%) KDE")
+            ax_t.fill_between(x_grid_tier, 0, y_cov, color="#e74c3c", alpha=0.25)
             
         ax_t.set_title(f"{tier_names[i]}\nSizes k ∈ [{k_min_tier}, {k_max_tier}] (n={len(cov_tier)})", fontsize=11, fontweight="bold")
         ax_t.set_xlabel("Metric Value (%)", fontsize=10)
         ax_t.set_ylabel("Probability Density", fontsize=10)
-        ax_t.set_xlim(0, 100)
+        ax_t.set_xlim(0, r_p99)
         ax_t.grid(True, linestyle="--", alpha=0.4)
         ax_t.legend(loc="best", fontsize=8.5)
         
