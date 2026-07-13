@@ -1193,18 +1193,15 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     3. Pareto-Optimal Frontier (Threat Coverage vs. Positive Cohesion).
     4. Subgraph Size (k) scaling analysis.
     """
-    if isinstance(analysis_results, dict):
-        communities = analysis_results.get("cohesive_communities", [])
-        if not communities:
-            print("No connected cohesive communities available to plot.")
-            return
-        cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
-        pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
-        sizes = np.array([c["size"] for c in communities], dtype=np.int16)
-        pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
-        neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
-    else:
-        cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = analysis_results
+    communities = analysis_results.get("cohesive_communities", [])
+    if not communities:
+        print("No connected cohesive communities available to plot.")
+        return
+    cov_pcts = np.array([c["neg_coverage_pct"] for c in communities], dtype=np.float32)
+    pos_cohesions = np.array([c["pos_cohesion_pct"] for c in communities], dtype=np.float32)
+    sizes = np.array([c["size"] for c in communities], dtype=np.int16)
+    pos_edges_arr = np.array([c["pos_edges"] for c in communities], dtype=np.float32)
+    neg_edges_arr = np.array([c["neg_edges"] for c in communities], dtype=np.float32)
         
     _plot_combinatorial_statistical_suite_from_arrays(
         cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr, title=title
