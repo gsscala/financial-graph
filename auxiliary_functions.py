@@ -1070,14 +1070,14 @@ def analyze_candidate_subsets(
         if f_jsonl is not None:
             f_jsonl.close()
                 
-    cohesive_communities.sort(key=lambda x: (x["neg_coverage_pct"], x["pos_cohesion_pct"]), reverse=True)
+    # cohesive_communities.sort(key=lambda x: (x["neg_coverage_pct"], x["pos_cohesion_pct"]), reverse=True)
     
-    return {
-        "candidate_nodes": candidate_nodes,
-        "num_candidate_nodes": len(candidate_nodes),
-        "total_global_neg_edges": total_global_neg_edges,
-        "cohesive_communities": cohesive_communities
-    }
+    # return {
+    #     "candidate_nodes": candidate_nodes,
+    #     "num_candidate_nodes": len(candidate_nodes),
+    #     "total_global_neg_edges": total_global_neg_edges,
+    #     "cohesive_communities": cohesive_communities
+    # }
 
 
 def plot_candidate_subsets_analysis(
@@ -1368,7 +1368,7 @@ def plot_combinatorial_statistical_suite(source: dict[str, Any] | str, title: st
         
         r_p99 = 100.0
         if len(cov_tier) > 0:
-            r_p99 = float(max(np.percentile(cov_tier, 99.0), np.percentile(coh_tier, 99.0)))
+            r_p99 = float(max(np.percentile(cov_tier, 99.9), np.percentile(coh_tier, 99.9)))
             r_p99 = min(100.0, max(1.0, r_p99))
             x_grid_tier = np.linspace(0, r_p99, 300)
             
