@@ -1237,7 +1237,7 @@ def plot_combinatorial_statistical_suite(analysis_results: dict[str, Any], title
     )
 
 
-def plot_macro_combinatorial_statistical_suite_from_jsonls(path: str, title: str = "Macro Combinatorial Threat Subgraph Statistical Suite") -> None:
+def plot_combinatorial_statistical_suite_from_jsonl(path: str, title: str = "Combinatorial Threat Subgraph Statistical Suite") -> None:
     """Stream primitive arrays from either a single JSONL file or a directory of JSONL files and plot the suite."""
     cov_pcts, pos_cohesions, sizes, pos_edges_arr, neg_edges_arr = load_subgraph_arrays_from_jsonl(path)
     if len(cov_pcts) == 0:
