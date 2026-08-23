@@ -1184,6 +1184,21 @@ def plot_candidate_subsets_analysis(
     plt.show()
 
 
+def extract_high_coverage_sets(directory: str, threshold: float, out_filepath: str) -> None:
+    """Extract sets with global negative edge coverage >= threshold to a new JSONL file."""
+    with open(out_filepath, 'w', encoding='utf-8') as out_f:
+        for filepath in glob.iglob(os.path.join(directory, "*.jsonl")):
+            try:
+                with open(filepath, 'r', encoding='utf-8') as in_f:
+                    for line in in_f:
+                        if not line.strip(): continue
+                        record = json.loads(line)
+                        if record.get("neg_coverage_pct", 0.0) >= threshold:
+                            out_f.write(line)
+            except Exception:
+                continue
+
+
 def load_subgraph_arrays_from_jsonl(path: str) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """Stream primitive arrays directly from a single JSONL file or an entire directory of JSONL files (18 bytes/subgraph)."""
     if os.path.isdir(path):
@@ -1605,7 +1620,7 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
         neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
         node_neg_degs.append(neg_deg)
         
-    node_sizes = [250 + 120 * deg for deg in node_neg_degs]
+    node_sizes = 400  # Size scaling removed per request
         
     pos_edges = []
     neg_edges = []
@@ -1739,3 +1754,32 @@ def plot_all_fraudster_groups(graph: nx.Graph, groups: list[dict[str, Any]], tit
         plt.close()
     else:
         plt.show()
+
+def get_top_negative_connected_subgraph(graph: nx.Graph, top_k: int, min_neg_deg: int = 0, min_neg_ratio: float = 0.0) -> nx.Graph:
+    """
+    Filter nodes by minimum negative degree and minimum negative edge ratio,
+    sort remaining nodes by their negative degree, take the top_k nodes, 
+    and return the induced subgraph excluding any isolated (unconnected) nodes.
+    """
+    neg_degrees = {}
+    for node in graph.nodes():
+        total_deg = graph.degree(node)
+        if total_deg == 0:
+            continue
+            
+        neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
+        neg_ratio = neg_deg / total_deg
+        
+        if neg_deg >= min_neg_deg and neg_ratio >= min_neg_ratio:
+            neg_degrees[node] = neg_deg
+        
+    sorted_nodes = sorted(neg_degrees.keys(), key=lambda n: neg_degrees[n], reverse=True)
+    top_nodes = sorted_nodes[:top_k]
+    
+    subgraph = graph.subgraph(top_nodes).copy()
+    
+    # Remove unconnected nodes (nodes with 0 degree in this specific subgraph)
+    isolates = list(nx.isolates(subgraph))
+    subgraph.remove_nodes_from(isolates)
+    
+    return subgraph
