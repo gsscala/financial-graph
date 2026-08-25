@@ -1755,7 +1755,7 @@ def plot_all_fraudster_groups(graph: nx.Graph, groups: list[dict[str, Any]], tit
     else:
         plt.show()
 
-def get_top_negative_connected_subgraph(graph: nx.Graph, top_k: int, min_neg_deg: int = 0, min_neg_ratio: float = 0.0) -> nx.Graph:
+def get_top_negative_connected_subgraph(graph: nx.Graph, top_k: int, min_neg_deg: int = 0, min_neg_ratio: float = 0.0) -> tuple[nx.Graph, nx.Graph]:
     """
     Filter nodes by minimum negative degree and minimum negative edge ratio,
     sort remaining nodes by their negative degree, take the top_k nodes, 
@@ -1773,13 +1773,19 @@ def get_top_negative_connected_subgraph(graph: nx.Graph, top_k: int, min_neg_deg
         if neg_deg >= min_neg_deg and neg_ratio >= min_neg_ratio:
             neg_degrees[node] = neg_deg
         
-    sorted_nodes = sorted(neg_degrees.keys(), key=lambda n: neg_degrees[n], reverse=True)
-    top_nodes = sorted_nodes[:top_k]
+    sorted_nodesDeg = sorted(neg_degrees.keys(), key=lambda n: neg_degrees[n], reverse=True)
+    sorted_nodesProp = sorted(neg_degrees.keys(), key=lambda n: neg_degrees[n] / graph.degree(n) if graph.degree(n) else 0, reverse=True)
+    top_nodesDeg = sorted_nodesDeg[:top_k]
+    top_nodesProp = sorted_nodesProp[:top_k]
     
-    subgraph = graph.subgraph(top_nodes).copy()
+    subgraphDeg = graph.subgraph(top_nodesDeg).copy()
+    subgraphProp = graph.subgraph(top_nodesProp).copy()
     
     # Remove unconnected nodes (nodes with 0 degree in this specific subgraph)
-    isolates = list(nx.isolates(subgraph))
-    subgraph.remove_nodes_from(isolates)
+    isolatesDeg = list(nx.isolates(subgraphDeg))
+    subgraphDeg.remove_nodes_from(isolatesDeg)
+
+    isolatesProp = list(nx.isolates(subgraphProp))
+    subgraphProp.remove_nodes_from(isolatesProp)
     
-    return subgraph
+    return subgraphDeg, subgraphProp
