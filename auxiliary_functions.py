@@ -30,6 +30,8 @@ import scipy.ndimage as ndi
 import matplotlib.pyplot as plt
 from matplotlib.lines import Line2D
 from scipy.stats import gaussian_kde, percentileofscore
+import scipy.stats as stats
+import seaborn as sns
 
 
 # ==============================================================================
@@ -1592,7 +1594,7 @@ def detect_fraudster_groups(graph: nx.Graph, min_neg_degree: int = 2, min_pos_de
     return detected_groups
 
 
-def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Fraudster Group", save_path: str = None, ax: plt.Axes = None, stats: dict = None) -> None:
+def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Fraudster Group", save_path: str = None, ax: plt.Axes = None, stats: dict = None, ego_node: str = None) -> None:
     """Visualize a detected fraudster group with spring force layout.
     
     Args:
@@ -1602,6 +1604,7 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
         save_path: Optional path to save the generated image.
         ax: Optional subplot axes.
         stats: Optional stats to annotate inside.
+        ego_node: Optional central node to anchor in the middle of the layout.
     """
     subgraph = graph.subgraph(group_nodes)
     
@@ -1613,6 +1616,7 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
         
     n_nodes = len(group_nodes)
     k_distance = 1.8 / np.sqrt(n_nodes) if n_nodes > 0 else 1.0
+    
     pos = nx.spring_layout(layout_graph, weight='weight', k=k_distance, iterations=120, seed=42)
     
     node_neg_degs = []
@@ -1620,7 +1624,12 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
         neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
         node_neg_degs.append(neg_deg)
         
-    node_sizes = 400  # Size scaling removed per request
+    node_sizes = []
+    for node in subgraph.nodes():
+        if ego_node is not None:
+            node_sizes.append(400 if node == ego_node else 20)
+        else:
+            node_sizes.append(400)
         
     pos_edges = []
     neg_edges = []
@@ -1660,7 +1669,7 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
             edgelist=pos_edges,
             edge_color='#2ecc71',
             width=pos_widths,
-            alpha=0.8
+            alpha=0.15
         )
     
     if neg_edges:
@@ -1670,11 +1679,13 @@ def plot_fraudster_group(graph: nx.Graph, group_nodes: set, title: str = "Frauds
             edge_color='#e74c3c',
             width=neg_widths,
             style='dashed',
-            alpha=0.8
+            alpha=0.15
         )
     
     labels = {}
     for node in group_nodes:
+        if ego_node is not None and node != ego_node:
+            continue
         total_deg = graph.degree(node)
         neg_deg = sum(1 for nbr in graph.neighbors(node) if graph[node][nbr].get('weight', 1.0) < 0)
         labels[node] = f"{node}\n{total_deg},{neg_deg}"
@@ -1789,3 +1800,114 @@ def get_top_negative_connected_subgraph(graph: nx.Graph, top_k: int, min_neg_deg
     subgraphProp.remove_nodes_from(isolatesProp)
     
     return subgraphDeg, subgraphProp
+
+def rank_nodes_by_pvalue(graph: nx.Graph, top_k: int = None) -> pd.DataFrame:
+    """Rank nodes by the anomalousness of their negative edge fraction using a Binomial null model.
+    
+    This function calculates the global probability of a negative edge, then evaluates 
+    each node's negative edge count against this baseline using a right-tailed Binomial 
+    hypothesis test (P(X >= k)).
+    
+    Args:
+        graph: Undirected signed NetworkX graph.
+        top_k: Number of top anomalous nodes to return.
+        
+    Returns:
+        pd.DataFrame containing the ranked nodes matching the specific table structure.
+    """
+    total_edges = graph.number_of_edges()
+    if total_edges == 0:
+        return pd.DataFrame()
+        
+    neg_edges_total = sum(1 for u, v, d in graph.edges(data=True) if float(d.get("weight", 1.0)) < 0)
+    p_global = neg_edges_total / total_edges
+    
+    node_stats = []
+    for node in graph.nodes():
+        degree = graph.degree(node)
+        if degree == 0:
+            continue
+            
+        neg_edges = sum(1 for nbr in graph.neighbors(node) if float(graph[node][nbr].get("weight", 1.0)) < 0)
+        
+        # Right-tailed binomial test: P(X >= neg_edges)
+        p_val = stats.binom.sf(neg_edges - 1, degree, p_global)
+        
+        node_stats.append({
+            '#v.': node,
+            '(p-v)': p_val,
+            'd(v)': degree,
+            '#neg.': neg_edges
+        })
+        
+    df = pd.DataFrame(node_stats)
+    df = df.sort_values(by=['(p-v)', '#neg.'], ascending=[True, False]).reset_index(drop=True)
+    
+    # Add 'id' as rank (1-indexed)
+    df.index = df.index + 1
+    df.index.name = 'id'
+    
+    return df.head(top_k) if top_k else df
+
+def plot_pvalue_distribution(ranked_df: pd.DataFrame) -> None:
+    """Plot the distribution of p-values using a Double-Log KDE transformation."""
+    eps = np.finfo(float).eps
+    p_vals = np.maximum(ranked_df['(p-v)'].values, eps)
+    
+    # X = -log10(p)
+    log_p = -np.log10(p_vals)
+    
+    # Double log to compress extreme variance: Y = log10(X + 1)
+    double_log_p = np.log10(log_p + 1)
+    
+    fig, ax = plt.subplots(figsize=(10, 6))
+    
+    # KDE Plot
+    sns.kdeplot(double_log_p, color='#3498db', fill=True, alpha=0.6, ax=ax, linewidth=2)
+    
+    _apply_plot_style(ax, "Normalized Distribution of Anomaly Significance (Double Log KDE)")
+    ax.set_xlabel(r"$\log_{10}(-\log_{10}(p) + 1)$ (Higher is more anomalous)", fontsize=11, fontweight='bold', color='#34495e')
+    ax.set_ylabel("Density", fontsize=11, fontweight='bold', color='#34495e')
+    
+    # Threshold at p = 0.05
+    # -log10(0.05) ~= 1.301
+    # log10(1.301 + 1) ~= 0.362
+    p_thresh = 0.05
+    thresh_val = np.log10(-np.log10(p_thresh) + 1)
+    
+    ax.axvline(thresh_val, color='#e74c3c', linestyle='--', linewidth=2.5, label=f'p = {p_thresh} threshold')
+    ax.legend(fontsize=11)
+    
+    plt.tight_layout()
+    plt.show()
+
+def plot_top_anomalies_ego_graphs(graph: nx.Graph, ranked_df: pd.DataFrame, k: int = 3, radius: int = 1) -> None:
+    """Plot ego graphs for the top-k anomalous nodes, each on a distinct full-sized figure."""
+    top_nodes = ranked_df.head(k)['#v.'].tolist()
+
+    for i, node in enumerate(top_nodes):
+        # Get the ego graph for the target node
+        ego = nx.ego_graph(graph, node, radius=radius)
+        
+        # Format title with node stats
+        node_data = ranked_df[ranked_df['#v.'] == node].iloc[0]
+        p_val = node_data['(p-v)']
+        deg = node_data['d(v)']
+        neg = node_data['#neg.']
+        
+        title = f"Rank {i+1}: Node {node}\n$p={p_val:.2e}$ | {neg}/{deg} neg edges"
+        
+        # Create a distinct, full-sized figure for EACH node
+        fig, ax = plt.subplots(figsize=(10, 8))
+        
+        plot_fraudster_group(
+            graph, 
+            set(ego.nodes()), 
+            title=title, 
+            ax=ax, 
+            stats=None,
+            ego_node=node
+        )
+        
+        plt.tight_layout()
+        plt.show()
